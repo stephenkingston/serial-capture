@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::os::windows::ffi::OsStrExt;
 use time::{Duration as TimeDuration, OffsetDateTime};
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     ReadFile,
@@ -177,10 +177,15 @@ fn open_usbpcap(path: &str) -> Result<HANDLE> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    // USBPcap's IOCTLs (SETUP_BUFFER, START_FILTERING) declare
+    // FILE_READ_ACCESS | FILE_WRITE_ACCESS in their CTL_CODE; the I/O manager
+    // rejects the IOCTL with ERROR_ACCESS_DENIED unless the handle was opened
+    // with both rights. The driver itself doesn't actually require an
+    // Administrator token for opening — only USBPcap's installer needs that.
     let h = unsafe {
         CreateFileW(
             PCWSTR(wide.as_ptr()),
-            GENERIC_READ.0,
+            GENERIC_READ.0 | GENERIC_WRITE.0,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_EXISTING,
