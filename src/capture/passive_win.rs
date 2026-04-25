@@ -219,23 +219,30 @@ fn setup_buffer(handle: HANDLE, bytes: u32) -> Result<()> {
     Ok(())
 }
 
-#[repr(C)]
+/// Matches USBPcap's `_USBPCAP_ADDRESS_FILTER` declared with `#pragma pack(1)`:
+/// 4×u32 = 16 bytes + 1 byte = exactly 17 bytes. The driver rejects any other
+/// `InputBufferLength` with `ERROR_INVALID_PARAMETER`.
+#[repr(C, packed)]
 struct UsbpcapAddressFilter {
     addresses: [u32; 4],
     filter_all: u8,
 }
 
+const _: () = assert!(std::mem::size_of::<UsbpcapAddressFilter>() == 17);
+
 fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
-    let mut filter = UsbpcapAddressFilter {
-        addresses: [0; 4],
-        filter_all: 0,
-    };
+    // Build the bit array in a local before constructing the packed struct,
+    // since taking references to fields of a packed struct is unsafe in Rust.
+    let mut addresses = [0u32; 4];
     let bit = address as u32;
     if bit < 128 {
         let word = (bit / 32) as usize;
-        let mask = 1u32 << (bit % 32);
-        filter.addresses[word] |= mask;
+        addresses[word] = 1u32 << (bit % 32);
     }
+    let filter = UsbpcapAddressFilter {
+        addresses,
+        filter_all: 0,
+    };
     let mut returned = 0u32;
     unsafe {
         DeviceIoControl(
