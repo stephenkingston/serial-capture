@@ -56,9 +56,16 @@ KNOWN_VIDS = {
 # subprocess plumbing
 
 def _drain(stream, q: "Queue[str]") -> None:
-    for line in iter(stream.readline, ""):
-        q.put(line)
-    stream.close()
+    try:
+        for line in iter(stream.readline, ""):
+            q.put(line)
+    except Exception as e:
+        q.put(f"<reader thread error: {e!r}>\n")
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
 
 
 def start_capture(bin_path: Path, port: str, log_path: Path, *extra: str):
@@ -66,11 +73,14 @@ def start_capture(bin_path: Path, port: str, log_path: Path, *extra: str):
     creationflags = (
         subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     )
+    # Force UTF-8 so Rust's '→'/'←' decode cleanly on cp1252 Windows; replace
+    # on bad bytes so a single odd byte can't kill the reader thread silently.
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         creationflags=creationflags,
     )
@@ -140,8 +150,10 @@ def capture_session(bin_path: Path, port: str, log_path: Path, *extra: str):
         if not await_capture_active(proc, q):
             # capture failed to start — drain stdout for context, then fail
             sess.stop()
+            rc = sess.proc.returncode
             raise AssertionError(
-                f"capture did not start within timeout. output:\n{sess.output}"
+                f"capture did not start (process exited with code {rc!r}). "
+                f"stdout/stderr below:\n----\n{sess.output}----"
             )
         yield sess
     finally:
