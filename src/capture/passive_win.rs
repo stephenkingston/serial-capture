@@ -17,10 +17,13 @@ use crate::resolve::PortInfo;
 /// libpcap link-layer type for USBPcap-formatted packets.
 const DLT_USBPCAP: u32 = 249;
 
-/// IOCTLs derived from `CTL_CODE(0x8001, fn, METHOD_BUFFERED, access)`.
-/// See USBPcap/Public/USBPcapPublic.h.
-const IOCTL_USBPCAP_SETUP_BUFFER: u32 = 0x8001_E000;
-const IOCTL_USBPCAP_START_FILTERING: u32 = 0x8001_E004;
+/// IOCTLs derived from `CTL_CODE(FILE_DEVICE_UNKNOWN, fn, METHOD_BUFFERED, access)`,
+/// where FILE_DEVICE_UNKNOWN = 0x22. See USBPcapDriver/include/USBPcap.h.
+///
+///   SETUP_BUFFER     fn=0x800, access=FILE_READ_ACCESS              → 0x0022_6000
+///   START_FILTERING  fn=0x801, access=FILE_READ|FILE_WRITE_ACCESS   → 0x0022_E004
+const IOCTL_USBPCAP_SETUP_BUFFER: u32 = 0x0022_6000;
+const IOCTL_USBPCAP_START_FILTERING: u32 = 0x0022_E004;
 
 const CAPTURE_BUFFER_BYTES: u32 = 1 << 20; // 1 MB
 const USBPCAP_TRANSFER_BULK: u8 = 3;
