@@ -89,8 +89,14 @@ def start_capture(bin_path: Path, port: str, log_path: Path, *extra: str):
     return proc, q
 
 
-def await_capture_active(proc, q: Queue, timeout: float = 15.0) -> bool:
-    """Block until 'Logging to' has been printed (capture is recording)."""
+def await_capture_active(
+    proc, q: Queue, sink: list[str], timeout: float = 15.0
+) -> bool:
+    """Block until 'Logging to' has been printed (capture is recording).
+
+    Consumed lines are appended to `sink` so post-hoc stdout assertions
+    can still see the startup banner.
+    """
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if proc.poll() is not None:
@@ -99,6 +105,7 @@ def await_capture_active(proc, q: Queue, timeout: float = 15.0) -> bool:
             line = q.get(timeout=0.2)
         except Empty:
             continue
+        sink.append(line)
         if "Logging to" in line:
             time.sleep(0.3)  # brief settle so the IOCTL chain is fully armed
             return True
@@ -132,12 +139,14 @@ class Session:
     def __init__(self, proc, q):
         self.proc = proc
         self.q = q
+        self._preamble: list[str] = []
         self.output = ""
         self._stopped = False
 
     def stop(self) -> str:
         if not self._stopped:
-            self.output = stop_capture(self.proc, self.q)
+            tail = stop_capture(self.proc, self.q)
+            self.output = "".join(self._preamble) + tail
             self._stopped = True
         return self.output
 
@@ -147,7 +156,7 @@ def capture_session(bin_path: Path, port: str, log_path: Path, *extra: str):
     proc, q = start_capture(bin_path, port, log_path, *extra)
     sess = Session(proc, q)
     try:
-        if not await_capture_active(proc, q):
+        if not await_capture_active(proc, q, sess._preamble):
             # capture failed to start — drain stdout for context, then fail
             sess.stop()
             rc = sess.proc.returncode
