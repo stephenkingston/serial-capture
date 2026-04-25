@@ -1,0 +1,43 @@
+[package]
+name = "serial-capture"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-platform USB virtual COM port capture (CH340, FT232, FT2232, PL2303, CDC-ACM)"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["usb", "serial", "capture", "ftdi", "usbpcap"]
+categories = ["command-line-utilities", "hardware-support"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
+ctrlc = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+pcap = "2"
+nix = { version = "0.30", features = ["term", "fs"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+serialport = "4"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Devices_DeviceAndDriverInstallation",
+] }
+
+[build-dependencies]
+ureq = { version = "2", default-features = false, features = ["tls"] }
+sha2 = "0.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
