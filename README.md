@@ -102,14 +102,22 @@ each `sudo` invocation, or pass `--yes` / `-y` to skip the prompts:
 Run 'sudo modprobe usbmon'? [Y/n]
 → /dev/usbmon* is not readable by the current user.
 → Installing a permissive udev rule (mode 0644 / world-readable) at
-  /etc/udev/rules.d/60-serial-capture.rules so /dev/usbmon* stays
-  accessible across reboots and replugs.
+  /etc/udev/rules.d/60-serial-capture.rules. Persists across reboots
+  and replugs.
+→ NOTE: any local user on this machine will then be able to sniff
+  USB traffic — keystrokes, USB drives, smartcards, anything on the
+  bus. Fine for a single-user dev box; on a shared system, decline
+  and run serial-capture with sudo instead.
 Install udev rule and chmod /dev/usbmon* (one sudo invocation)? [Y/n]
 ```
 
-The udev rule is **world-readable** — anyone on the box can sniff USB.
-Fine for a dev machine. The rule persists across reboots and module
-reloads, so this only happens once.
+**Security note.** The auto-setup makes `/dev/usbmon*` world-readable
+because that's the only way to grant persistent access without a
+logout/login dance (process supplementary groups are frozen at login,
+so a fresh `serialcap` group can't apply to your current shell). For a
+single-user dev box, the practical risk is approximately zero. On a
+shared system — decline the prompt and run `sudo serial-capture …`
+instead, or write your own group-scoped rule before re-running.
 
 To also avoid loading the module by hand after a reboot:
 

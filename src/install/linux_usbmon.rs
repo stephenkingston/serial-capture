@@ -46,8 +46,12 @@ fn relax_permissions(assume_yes: bool) -> Result<()> {
     eprintln!(
         "→ /dev/usbmon* is not readable by the current user.\n\
          → Installing a permissive udev rule (mode 0644 / world-readable)\n\
-         \x20 at /etc/udev/rules.d/60-serial-capture.rules so /dev/usbmon*\n\
-         \x20 stays accessible across reboots and replugs."
+         \x20 at /etc/udev/rules.d/60-serial-capture.rules. Persists across\n\
+         \x20 reboots and replugs.\n\
+         → NOTE: any local user on this machine will then be able to sniff\n\
+         \x20 USB traffic — keystrokes, USB drives, smartcards, anything on\n\
+         \x20 the bus. Fine for a single-user dev box; on a shared system,\n\
+         \x20 decline and run serial-capture with sudo instead."
     );
     if !confirm(
         "Install udev rule and chmod /dev/usbmon* (one sudo invocation)?",
@@ -55,7 +59,7 @@ fn relax_permissions(assume_yes: bool) -> Result<()> {
     )? {
         bail!(
             "declined; cannot capture without read access to /dev/usbmon*.\n\
-             Re-run with --yes to skip this prompt."
+             Re-run with --yes to skip this prompt, or run with sudo."
         );
     }
     // Idempotent: re-running overwrites the rule with the same content and
