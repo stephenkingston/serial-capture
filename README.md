@@ -143,6 +143,12 @@ Output
   -q, --quiet          Suppress live tail to stdout (with -o), or suppress
                        all text output (without -o; useful with --pcap)
 
+First-run / privileges
+  -y, --yes            Linux: auto-confirm sudo prompts (load usbmon, write
+                       udev rule). No effect when setup is already complete.
+  --usbpcap <NAME>     Windows: pick a specific filter interface, e.g.
+                       '\\.\USBPcap2'. Defaults to '\\.\USBPcap1'.
+
 Decoder tuning
   --ftdi-mps <BYTES>   Force FTDI bulk-IN wMaxPacketSize (64 or 512). Use only
                        when the auto-detection picks the wrong size for an
@@ -172,9 +178,12 @@ chunk on its bulk-IN endpoint.
 
 ## License
 
-MIT OR Apache-2.0.
+GPL-3.0-or-later. See [LICENSE](LICENSE) for the full text.
 
 ## Acknowledgements
 
-- [USBPcap](https://desowin.org/usbpcap/) — Windows USB packet capture driver
+- [USBPcap](https://desowin.org/usbpcap/) — Windows USB packet capture driver.
+  The unmodified upstream installer (`vendor/USBPcapSetup-1.5.4.0.exe`) is
+  bundled and run as a separate process; the installer's components carry
+  their own licenses (USBPcapDriver: GPL-2.0; USBPcapCMD: BSD-2-Clause).
 - Linux `usbmon` and the libpcap project

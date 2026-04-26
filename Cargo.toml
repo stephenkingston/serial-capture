@@ -2,11 +2,21 @@
 name = "serial-capture"
 version = "0.1.0"
 edition = "2024"
+authors = ["Stephen Kingston <stephen.psk@gmail.com>"]
 description = "Cross-platform USB virtual COM port capture (CH340, FT232, FT2232, PL2303, CDC-ACM)"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 readme = "README.md"
+repository = "https://github.com/stephenkingston/serial-capture"
+homepage = "https://github.com/stephenkingston/serial-capture"
+documentation = "https://docs.rs/serial-capture"
 keywords = ["usb", "serial", "capture", "ftdi", "usbpcap"]
 categories = ["command-line-utilities", "hardware-support"]
+# End-to-end tests need real hardware (Arduino Uno) and aren't useful inside
+# the published crate. Everything else is needed (build.rs reads vendor/).
+exclude = [
+    "tests/",
+    ".claude/",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
