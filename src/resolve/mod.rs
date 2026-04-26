@@ -13,17 +13,30 @@ pub struct PortInfo {
     pub bulk_in_max_packet: Option<u16>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ListedPort {
+    /// "/dev/ttyUSB0" on Linux, "COM4" on Windows.
+    pub path: String,
+    pub vid: u16,
+    pub pid: u16,
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::resolve;
+pub use linux::{list_ports, resolve};
 
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::resolve;
+pub use win::{list_ports, resolve};
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn resolve(_port: &str) -> anyhow::Result<PortInfo> {
+    unreachable!("platform guard should have exited before this point");
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn list_ports() -> anyhow::Result<Vec<ListedPort>> {
     unreachable!("platform guard should have exited before this point");
 }

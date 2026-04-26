@@ -7,7 +7,7 @@ mod output;
 mod platform_guard;
 mod resolve;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -30,12 +30,16 @@ fn main() -> Result<()> {
         }
     }
 
-    let info = resolve::resolve(&args.port)
-        .with_context(|| format!("resolving port '{}'", args.port))?;
+    let port = match args.port.as_deref() {
+        Some(p) => p.to_string(),
+        None => auto_detect_port()?,
+    };
+    let info = resolve::resolve(&port)
+        .with_context(|| format!("resolving port '{port}'"))?;
 
     eprintln!(
         "→ Port {}: bus {} device {} VID:PID {:04x}:{:04x}{}",
-        args.port,
+        port,
         info.bus,
         info.devnum,
         info.vid,
@@ -95,6 +99,35 @@ fn main() -> Result<()> {
     };
 
     capture::run_passive(info, decoder, options, on_event)
+}
+
+fn auto_detect_port() -> Result<String> {
+    let listed = resolve::list_ports().context("listing USB serial ports")?;
+    match listed.len() {
+        0 => bail!(
+            "no USB serial devices detected. Plug in a device or pass --port."
+        ),
+        1 => {
+            let p = &listed[0];
+            eprintln!(
+                "→ Auto-detected port: {} (VID:PID {:04x}:{:04x})",
+                p.path, p.vid, p.pid
+            );
+            Ok(p.path.clone())
+        }
+        _ => {
+            let mut msg = String::from(
+                "multiple USB serial devices detected; pass --port to choose:\n",
+            );
+            for p in &listed {
+                msg.push_str(&format!(
+                    "  {} (VID:PID {:04x}:{:04x})\n",
+                    p.path, p.vid, p.pid
+                ));
+            }
+            bail!("{msg}")
+        }
+    }
 }
 
 fn describe_dest(output: Option<&std::path::Path>, quiet: bool) -> String {

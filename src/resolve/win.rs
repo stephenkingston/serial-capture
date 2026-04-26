@@ -8,9 +8,57 @@ use windows::Win32::System::Registry::{
 };
 use windows::core::PCWSTR;
 
-use super::PortInfo;
+use super::{ListedPort, PortInfo};
 
 const USB_ENUM_KEY: &str = r"SYSTEM\CurrentControlSet\Enum\USB";
+
+pub fn list_ports() -> Result<Vec<ListedPort>> {
+    let mut out: Vec<ListedPort> = Vec::new();
+    let usb_root = open_subkey(HKEY_LOCAL_MACHINE, USB_ENUM_KEY)
+        .with_context(|| format!("opening {USB_ENUM_KEY}"))?;
+    let walk = (|| -> Result<()> {
+        for vid_pid_name in enum_subkeys(usb_root)? {
+            let parsed = match parse_vidpid(&vid_pid_name) {
+                Some(t) => t,
+                None => continue,
+            };
+            let vp_handle = match open_subkey(usb_root, &vid_pid_name) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            let _: Result<()> = (|| -> Result<()> {
+                for instance_name in enum_subkeys(vp_handle)? {
+                    let inst_handle = match open_subkey(vp_handle, &instance_name) {
+                        Ok(h) => h,
+                        Err(_) => continue,
+                    };
+                    let port_name = read_string(inst_handle, "Device Parameters", "PortName");
+                    unsafe { let _ = RegCloseKey(inst_handle); }
+                    if let Some(name) = port_name {
+                        let trimmed = name.trim();
+                        if trimmed.to_ascii_uppercase().starts_with("COM") {
+                            out.push(ListedPort {
+                                path: trimmed.to_string(),
+                                vid: parsed.0,
+                                pid: parsed.1,
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            })();
+            unsafe { let _ = RegCloseKey(vp_handle); }
+        }
+        Ok(())
+    })();
+    unsafe { let _ = RegCloseKey(usb_root); }
+    walk?;
+    // Stable order, deduplicate composite-interface duplicates that report the
+    // same PortName from multiple interface keys.
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out.dedup_by(|a, b| a.path == b.path);
+    Ok(out)
+}
 
 pub fn resolve(port: &str) -> Result<PortInfo> {
     let want = port.trim().to_ascii_uppercase();

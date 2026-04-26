@@ -7,10 +7,14 @@ Supported chips: **CDC-ACM**, **FTDI** (FT232/FT2232/FT4232/FT-X),
 **WCH CH340/341/343/9102**, **Prolific PL2303**.
 
 ```
-serial-capture --port /dev/ttyACM0                          # → stdout
-serial-capture --port /dev/ttyACM0 -o capture.txt
-serial-capture --port COM4         -o capture.txt --pcap capture.pcapng
+serial-capture                                              # auto-detect, → stdout
+serial-capture -o capture.txt                               # auto-detect, → file
+serial-capture --port /dev/ttyACM0 -o capture.txt           # explicit port
+serial-capture --port COM4 -o capture.txt --pcap capture.pcapng
 ```
+
+`--port` is optional: when exactly one USB serial device is connected, the
+tool picks it. Otherwise it lists the candidates and exits.
 
 ## Install
 
@@ -114,10 +118,12 @@ re-enumerates). Then re-run.
 ## CLI reference
 
 ```
-serial-capture --port <PORT> [options]
+serial-capture [--port <PORT>] [options]
 
-Required
-  --port <PORT>        COM4 (Windows) or /dev/ttyUSB0 / /dev/ttyACM0 (Linux)
+Port selection
+  --port <PORT>        COM4 (Windows) or /dev/ttyUSB0 / /dev/ttyACM0 (Linux).
+                       Optional: if there's exactly one USB serial device on
+                       the system, it's picked automatically.
 
 Output
   -o, --output <FILE>  Text log path. Omit to write events to stdout.

@@ -1,7 +1,32 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 
-use super::PortInfo;
+use super::{ListedPort, PortInfo};
+
+pub fn list_ports() -> Result<Vec<ListedPort>> {
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir("/sys/class/tty") {
+        Ok(e) => e,
+        Err(_) => return Ok(out),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !(name_str.starts_with("ttyUSB") || name_str.starts_with("ttyACM")) {
+            continue;
+        }
+        let path = format!("/dev/{name_str}");
+        if let Ok(info) = resolve(&path) {
+            out.push(ListedPort {
+                path,
+                vid: info.vid,
+                pid: info.pid,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
 
 pub fn resolve(port: &str) -> Result<PortInfo> {
     let basename = port

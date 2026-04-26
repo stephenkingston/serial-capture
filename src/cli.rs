@@ -8,9 +8,11 @@ use std::path::PathBuf;
     version,
 )]
 pub struct Args {
-    /// Serial port to capture (e.g. COM4 on Windows, /dev/ttyUSB0 or /dev/ttyACM0 on Linux).
+    /// Serial port to capture (e.g. COM4 on Windows, /dev/ttyUSB0 or /dev/ttyACM0
+    /// on Linux). If omitted, the tool auto-detects when exactly one USB serial
+    /// device is connected; otherwise it lists candidates and exits.
     #[arg(long, value_name = "PORT")]
-    pub port: String,
+    pub port: Option<String>,
 
     /// Output text file path. If omitted, decoded events are written to
     /// stdout instead. Combine with --quiet to suppress text output entirely
