@@ -68,10 +68,10 @@ fn main() -> Result<()> {
             _ => String::new(),
         }
     );
-    eprintln!("→ Logging to {}", args.output.display());
+    eprintln!("→ Logging to {}", describe_dest(args.output.as_deref(), args.quiet));
 
     let mut sink = TextSink::create(
-        &args.output,
+        args.output.as_deref(),
         !args.quiet,
         args.format,
         args.printable_only,
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
     eprintln!("→ Press Ctrl-C to stop.");
 
     let written = Arc::new(AtomicUsize::new(0));
-    install_sigint_handler(written.clone(), &args.output, options.pcap_path);
+    install_sigint_handler(written.clone(), args.output.as_deref(), options.pcap_path);
 
     let on_event = {
         let written = written.clone();
@@ -112,7 +112,7 @@ fn run_active(args: cli::Args) -> Result<()> {
 
     eprintln!("→ Active proxy mode (Linux pty bridge).");
     let sink = TextSink::create(
-        &args.output,
+        args.output.as_deref(),
         !args.quiet,
         args.format,
         args.printable_only,
@@ -120,7 +120,7 @@ fn run_active(args: cli::Args) -> Result<()> {
     let sink = std::sync::Arc::new(std::sync::Mutex::new(sink));
 
     let written = Arc::new(AtomicUsize::new(0));
-    install_sigint_handler(written.clone(), &args.output, None);
+    install_sigint_handler(written.clone(), args.output.as_deref(), None);
 
     capture::run_active(&args.port, args.baud, sink, written)
 }
@@ -141,7 +141,7 @@ fn run_active(args: cli::Args) -> Result<()> {
 
     eprintln!("→ Active proxy mode (Windows com0com bridge).");
     let sink = TextSink::create(
-        &args.output,
+        args.output.as_deref(),
         !args.quiet,
         args.format,
         args.printable_only,
@@ -149,22 +149,33 @@ fn run_active(args: cli::Args) -> Result<()> {
     let sink = std::sync::Arc::new(std::sync::Mutex::new(sink));
 
     let written = Arc::new(AtomicUsize::new(0));
-    install_sigint_handler(written.clone(), &args.output, None);
+    install_sigint_handler(written.clone(), args.output.as_deref(), None);
 
     capture::run_active(&args.port, args.baud, sink, written)
 }
 
+fn describe_dest(output: Option<&std::path::Path>, quiet: bool) -> String {
+    match (output, quiet) {
+        (Some(p), _) => p.display().to_string(),
+        (None, false) => "stdout".to_string(),
+        (None, true) => "(discarded — --quiet without --output)".to_string(),
+    }
+}
+
 fn install_sigint_handler(
     written: Arc<AtomicUsize>,
-    output: &std::path::Path,
+    output: Option<&std::path::Path>,
     pcap: Option<&std::path::Path>,
 ) {
-    let output = output.to_owned();
+    let output = output.map(|p| p.to_owned());
     let pcap = pcap.map(|p| p.to_owned());
     let _ = ctrlc::set_handler(move || {
         let n = written.load(Ordering::Relaxed);
         eprintln!();
-        eprintln!("Stopped. Wrote {n} event(s) to {}.", output.display());
+        match output.as_ref() {
+            Some(p) => eprintln!("Stopped. Wrote {n} event(s) to {}.", p.display()),
+            None => eprintln!("Stopped. Wrote {n} event(s)."),
+        }
         if let Some(p) = pcap.as_ref() {
             eprintln!("Pcapng saved to {}.", p.display());
         }

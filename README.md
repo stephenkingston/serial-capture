@@ -7,6 +7,7 @@ Supported chips: **CDC-ACM**, **FTDI** (FT232/FT2232/FT4232/FT-X),
 **WCH CH340/341/343/9102**, **Prolific PL2303**.
 
 ```
+serial-capture --port /dev/ttyACM0                          # → stdout
 serial-capture --port /dev/ttyACM0 -o capture.txt
 serial-capture --port COM4         -o capture.txt --pcap capture.pcapng
 serial-capture --port COM4         -o capture.txt --active --baud 115200
@@ -149,11 +150,10 @@ is not yet wired. The tool prints exact instructions on first run:
 ## CLI reference
 
 ```
-serial-capture --port <PORT> -o <FILE> [options]
+serial-capture --port <PORT> [options]
 
 Required
   --port <PORT>        COM4 (Windows) or /dev/ttyUSB0 / /dev/ttyACM0 (Linux)
-  -o, --output <FILE>  Text log path
 
 Mode
   --active             Proxy via pty (Linux) or com0com (Windows) instead of
@@ -162,10 +162,12 @@ Mode
   --baud <BAUD>        Real-port baud in --active mode (default: 9600)
 
 Output
+  -o, --output <FILE>  Text log path. Omit to write events to stdout.
   --pcap <FILE>        Also write Wireshark-compatible pcapng (passive only)
   --format <hex|ascii|both>   Text log columns (default: both)
   --printable-only     Skip events with zero text bytes
-  -q, --quiet          Suppress live tail to stdout
+  -q, --quiet          Suppress live tail to stdout (with -o), or suppress
+                       all text output (without -o; useful with --pcap)
 
 Decoder tuning
   --ftdi-mps <BYTES>   Force FTDI bulk-IN wMaxPacketSize (64 or 512). Use only

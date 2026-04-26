@@ -12,9 +12,11 @@ pub struct Args {
     #[arg(long, value_name = "PORT")]
     pub port: String,
 
-    /// Output text file path.
+    /// Output text file path. If omitted, decoded events are written to
+    /// stdout instead. Combine with --quiet to suppress text output entirely
+    /// (useful with --pcap).
     #[arg(short = 'o', long = "output", value_name = "FILE")]
-    pub output: PathBuf,
+    pub output: Option<PathBuf>,
 
     /// Use active proxy mode (com0com / pty) instead of passive USB sniffing.
     #[arg(long)]

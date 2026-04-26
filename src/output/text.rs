@@ -15,25 +15,34 @@ const TS_FMT: &[FormatItem<'static>] = format_description!(
 );
 
 pub struct TextSink {
-    file: BufWriter<File>,
-    tee_stdout: bool,
+    file: Option<BufWriter<File>>,
+    write_stdout: bool,
     format: Format,
     printable_only: bool,
     local_offset: UtcOffset,
 }
 
 impl TextSink {
+    /// `path=Some` writes to that file. `path=None` writes to stdout instead.
+    /// `write_stdout` controls whether stdout is used: when there is a file
+    /// it acts as a tee; when there is no file it is the primary destination.
+    /// Both off = events are counted but discarded.
     pub fn create(
-        path: &Path,
-        tee_stdout: bool,
+        path: Option<&Path>,
+        write_stdout: bool,
         format: Format,
         printable_only: bool,
     ) -> Result<Self> {
-        let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
+        let file = match path {
+            Some(p) => Some(BufWriter::new(
+                File::create(p).with_context(|| format!("creating {}", p.display()))?,
+            )),
+            None => None,
+        };
         let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
         Ok(Self {
-            file: BufWriter::new(file),
-            tee_stdout,
+            file,
+            write_stdout,
             format,
             printable_only,
             local_offset,
@@ -56,13 +65,17 @@ impl TextSink {
 
         for chunk in ev.bytes.chunks(BYTES_PER_LINE) {
             let line = format_line(&ts, arrow, chunk, self.format);
-            writeln!(self.file, "{line}").context("writing to log file")?;
-            if self.tee_stdout {
+            if let Some(f) = self.file.as_mut() {
+                writeln!(f, "{line}").context("writing to log file")?;
+            }
+            if self.write_stdout {
                 let mut out = stdout().lock();
                 writeln!(out, "{line}").ok();
             }
         }
-        self.file.flush().context("flushing log file")?;
+        if let Some(f) = self.file.as_mut() {
+            f.flush().context("flushing log file")?;
+        }
         Ok(true)
     }
 }
