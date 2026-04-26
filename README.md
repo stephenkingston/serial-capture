@@ -115,6 +115,13 @@ and replug the target device** (USBPcap's filter driver attaches at PnP
 enumeration; existing connections aren't filtered until the device
 re-enumerates). Then re-run.
 
+**Multi-controller systems.** USBPcap installs one `\\.\USBPcapN` interface
+per USB host controller. The tool defaults to `\\.\USBPcap1`. If your
+device is on a different controller, capture will silently produce no
+traffic — pass `--usbpcap '\\.\USBPcap2'` (or 3, 4, …) to pick the right
+one. Wireshark's interface list (or `dumpcap -D`) shows which `USBPcapN`
+sees the device.
+
 ## CLI reference
 
 ```
@@ -155,7 +162,8 @@ chunk on its bulk-IN endpoint.
 
 - Hub-IOCTL endpoint discovery on Windows (current FTDI MPS is a PID-based
   heuristic; `--ftdi-mps` overrides)
-- Multi-controller `\\.\USBPcapN` selection (currently hardcoded to USBPcap1)
+- Auto-detect `\\.\USBPcapN` by walking the device tree to the root hub
+  (today: defaults to `USBPcap1`, override with `--usbpcap`)
 - Tested chip families: CDC-ACM, FTDI logic verified by unit tests; live
   end-to-end testing requires the real hardware
 

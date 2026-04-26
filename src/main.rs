@@ -79,6 +79,7 @@ fn main() -> Result<()> {
 
     let options = capture::PassiveOptions {
         pcap_path: args.pcap.as_deref(),
+        usbpcap_override: args.usbpcap.as_deref(),
     };
     if let Some(p) = options.pcap_path {
         eprintln!("→ Pcapng to {}", p.display());

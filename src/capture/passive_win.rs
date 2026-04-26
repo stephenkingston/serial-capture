@@ -34,11 +34,22 @@ pub fn run_passive(
     options: PassiveOptions<'_>,
     mut on_event: impl FnMut(Event) -> Result<()>,
 ) -> Result<()> {
-    // TODO(milestone-later): enumerate hubs via IOCTL_USBPCAP_GET_HUB_SYMLINK and
-    // pick the USBPcapN that filters the target's parent root hub. For now we open
-    // \\.\USBPcap1 (typical first interface). Multi-controller systems may need
-    // to override this — surface a flag once we have multi-controller test data.
-    let handle = open_usbpcap(r"\\.\USBPcap1")?;
+    // USBPcap installs one filter interface per host controller. A device on
+    // controller N won't show traffic on \\.\USBPcap1. Order of preference:
+    //   1. --usbpcap CLI override
+    //   2. (future) auto-detect by walking the device tree to the root hub
+    //   3. \\.\USBPcap1 fallback
+    let iface = options.usbpcap_override.unwrap_or(r"\\.\USBPcap1");
+    if options.usbpcap_override.is_none() {
+        eprintln!(
+            "→ Using USBPcap interface {iface} (default). \
+             If no traffic appears, the device is likely on a different host \
+             controller — pass --usbpcap '\\\\.\\USBPcap2' (or 3, 4, …)."
+        );
+    } else {
+        eprintln!("→ Using USBPcap interface {iface}");
+    }
+    let handle = open_usbpcap(iface)?;
     let _guard = HandleGuard(handle);
 
     setup_buffer(handle, CAPTURE_BUFFER_BYTES)?;
@@ -48,7 +59,7 @@ pub fn run_passive(
     read_exact(handle, &mut header).context("reading USBPcap pcap file header")?;
     let dlt = u32::from_le_bytes(header[20..24].try_into().unwrap());
     if dlt != DLT_USBPCAP {
-        bail!("expected DLT_USBPCAP ({DLT_USBPCAP}) on \\\\.\\USBPcap1, got {dlt}");
+        bail!("expected DLT_USBPCAP ({DLT_USBPCAP}) on {iface}, got {dlt}");
     }
 
     let mut pcap_sink = match options.pcap_path {

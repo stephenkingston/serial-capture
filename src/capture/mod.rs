@@ -30,4 +30,6 @@ pub use passive_win::run_passive;
 /// Bridge into the platform-specific capture entry point.
 pub struct PassiveOptions<'a> {
     pub pcap_path: Option<&'a Path>,
+    /// Windows only: explicit `\\.\USBPcapN` interface override. Ignored on Linux.
+    pub usbpcap_override: Option<&'a str>,
 }

@@ -47,6 +47,14 @@ pub struct Args {
     /// auto-detection picks the wrong size for an unusual variant or clone.
     #[arg(long, value_name = "BYTES")]
     pub ftdi_mps: Option<u16>,
+
+    /// Windows only: pick a specific USBPcap interface (e.g.
+    /// `\\.\USBPcap2`). USBPcap installs one filter per host controller; a
+    /// device on a controller other than the first won't show traffic on
+    /// `\\.\USBPcap1`. Defaults to auto-detect, falling back to
+    /// `\\.\USBPcap1` if detection fails.
+    #[arg(long, value_name = "NAME")]
+    pub usbpcap: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
