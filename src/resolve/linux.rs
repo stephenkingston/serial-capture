@@ -9,8 +9,14 @@ pub fn resolve(port: &str) -> Result<PortInfo> {
         .unwrap_or(port);
 
     let device_link = format!("/sys/class/tty/{basename}/device");
-    let iface_path = std::fs::canonicalize(&device_link)
+    let start = std::fs::canonicalize(&device_link)
         .with_context(|| format!("'{port}' is not a USB-backed serial port (no sysfs entry at {device_link})"))?;
+
+    // ttyACM0 (CDC-ACM): start is the USB interface directly.
+    // ttyUSB0 (FTDI/CH340/PL2303): start is a usb-serial-port node *inside* the
+    // interface. Walk up to whichever ancestor has bInterfaceNumber.
+    let iface_path = find_ancestor_with_file(&start, "bInterfaceNumber", 4)
+        .ok_or_else(|| anyhow!("'{port}': could not locate USB interface from {}", start.display()))?;
 
     let usb_dev = iface_path
         .parent()
@@ -127,6 +133,18 @@ fn scan_siblings_for_bulk(usb_dev: &Path, skip: &Path) -> Endpoints {
         }
     }
     Endpoints::default()
+}
+
+fn find_ancestor_with_file(start: &Path, name: &str, max_depth: usize) -> Option<PathBuf> {
+    let mut current = Some(start);
+    for _ in 0..=max_depth {
+        let p = current?;
+        if p.join(name).exists() {
+            return Some(p.to_path_buf());
+        }
+        current = p.parent();
+    }
+    None
 }
 
 fn read_trim(p: &Path) -> Result<String> {
