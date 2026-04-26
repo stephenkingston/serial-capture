@@ -22,10 +22,10 @@ tool picks it. Otherwise it lists the candidates and exits.
 cargo install serial-capture
 ```
 
-`cargo install` is the only supported distribution today. Builds run a small
-`build.rs` that fetches the pinned USBPcap installer (~190 KB) from GitHub and
-embeds it into the Windows binary; set `USBPCAP_INSTALLER=/path/to/file` to
-build offline.
+`cargo install` is the only supported distribution today. The pinned USBPcap
+installer (~190 KB) ships in `vendor/` and is embedded into the Windows binary
+at build time — no network access required. Override with
+`USBPCAP_INSTALLER=/path/to/file cargo build` if you need a different version.
 
 Platform support:
 

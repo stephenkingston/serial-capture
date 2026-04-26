@@ -31,10 +31,6 @@ windows = { version = "0.58", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
 ] }
 
-[build-dependencies]
-ureq = { version = "2", default-features = false, features = ["tls"] }
-sha2 = "0.10"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1
