@@ -93,9 +93,9 @@ in `--active` mode (no URB stream exists at the proxy layer).
 
 ### Linux passive
 
-`usbmon` is in-tree. On first run, if `/dev/usbmonN` is missing or unreadable
-the tool offers to fix it for you — one prompt before each `sudo` invocation,
-or pass `--yes` / `-y` to skip the prompts:
+`usbmon` is in-tree. On first run, if it isn't loaded or `/dev/usbmonN`
+isn't readable, the tool offers to fix it for you — one prompt before
+each `sudo` invocation, or pass `--yes` / `-y` to skip the prompts:
 
 ```
 → /dev/usbmon* is missing. The usbmon kernel module is not loaded.
@@ -107,25 +107,14 @@ Run 'sudo modprobe usbmon'? [Y/n]
 Install udev rule and chmod /dev/usbmon* (one sudo invocation)? [Y/n]
 ```
 
-The default rule is **world-readable** — fine for a dev box, persists across
-reboots and module reloads, no logout needed. To survive reboots **without**
-loading the module by hand each time:
+The udev rule is **world-readable** — anyone on the box can sniff USB.
+Fine for a dev machine. The rule persists across reboots and module
+reloads, so this only happens once.
+
+To also avoid loading the module by hand after a reboot:
 
 ```
 echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf
-```
-
-For a tighter, group-scoped setup on shared systems, decline the auto-setup
-and install a `serialcap`-group rule manually (this requires logging out and
-back in for the group change to take effect):
-
-```
-sudo install -m 644 /dev/stdin /etc/udev/rules.d/60-serial-capture.rules <<'EOF'
-KERNEL=="usbmon[0-9]*", GROUP="serialcap", MODE="0640"
-EOF
-sudo groupadd -f serialcap && sudo usermod -aG serialcap $USER
-sudo udevadm control --reload && sudo udevadm trigger
-# log out and back in for the group change to take effect
 ```
 
 ### Windows passive

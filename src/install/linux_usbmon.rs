@@ -42,22 +42,12 @@ fn load_module(assume_yes: bool) -> Result<()> {
     sudo(&["modprobe", "usbmon"])
 }
 
-const RULE_PATH: &str = "/etc/udev/rules.d/60-serial-capture.rules";
-
 fn relax_permissions(assume_yes: bool) -> Result<()> {
-    if Path::new(RULE_PATH).exists() {
-        bail!(
-            "/dev/usbmon* is unreadable but {RULE_PATH} already exists.\n\
-             You may have set up the group-scoped rule but haven't logged out\n\
-             and back in yet (group changes only apply to new login sessions).\n\
-             Either log out + back in, or remove {RULE_PATH} and re-run."
-        );
-    }
     eprintln!(
         "→ /dev/usbmon* is not readable by the current user.\n\
-         → Installing a permissive udev rule (mode 0644 / world-readable) at\n\
-         \x20 {RULE_PATH} so /dev/usbmon* stays accessible across reboots and\n\
-         \x20 replugs. For a tighter group-scoped setup, decline and see README."
+         → Installing a permissive udev rule (mode 0644 / world-readable)\n\
+         \x20 at /etc/udev/rules.d/60-serial-capture.rules so /dev/usbmon*\n\
+         \x20 stays accessible across reboots and replugs."
     );
     if !confirm(
         "Install udev rule and chmod /dev/usbmon* (one sudo invocation)?",
@@ -65,9 +55,11 @@ fn relax_permissions(assume_yes: bool) -> Result<()> {
     )? {
         bail!(
             "declined; cannot capture without read access to /dev/usbmon*.\n\
-             Re-run with --yes to skip this prompt, or set up access manually."
+             Re-run with --yes to skip this prompt."
         );
     }
+    // Idempotent: re-running overwrites the rule with the same content and
+    // re-chmods, both no-ops on second run.
     let script = r#"set -e
 printf 'KERNEL=="usbmon[0-9]*", MODE="0644"\n' > /etc/udev/rules.d/60-serial-capture.rules
 udevadm control --reload
