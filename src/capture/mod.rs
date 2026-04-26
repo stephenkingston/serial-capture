@@ -18,19 +18,9 @@ pub struct Event {
 use std::path::Path;
 
 #[cfg(target_os = "linux")]
-mod active_linux;
-#[cfg(target_os = "linux")]
-pub use active_linux::run_active;
-
-#[cfg(target_os = "linux")]
 mod passive_linux;
 #[cfg(target_os = "linux")]
 pub use passive_linux::run_passive;
-
-#[cfg(target_os = "windows")]
-mod active_win;
-#[cfg(target_os = "windows")]
-pub use active_win::run_active;
 
 #[cfg(target_os = "windows")]
 mod passive_win;

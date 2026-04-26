@@ -19,8 +19,8 @@ Passive mode (USBPcap):
 | format_hex      | `--format hex` emits hex only, no ASCII column                  |
 | format_ascii    | `--format ascii` emits ASCII only, no hex column                |
 
-Out of scope: active mode (`--active`), multi-controller `\\.\USBPcapN`
-selection, FTDI/CH340/PL2303 framing decoders (covered by Rust unit tests).
+Out of scope: multi-controller `\\.\USBPcapN` selection,
+FTDI/CH340/PL2303 framing decoders (covered by Rust unit tests).
 
 ## Setup
 

@@ -18,14 +18,6 @@ pub struct Args {
     #[arg(short = 'o', long = "output", value_name = "FILE")]
     pub output: Option<PathBuf>,
 
-    /// Use active proxy mode (com0com / pty) instead of passive USB sniffing.
-    #[arg(long)]
-    pub active: bool,
-
-    /// Baud rate. Required for --active. Recorded as metadata in passive mode.
-    #[arg(long, value_name = "BAUD")]
-    pub baud: Option<u32>,
-
     /// Also write a Wireshark-compatible pcapng capture.
     #[arg(long, value_name = "FILE")]
     pub pcap: Option<PathBuf>,

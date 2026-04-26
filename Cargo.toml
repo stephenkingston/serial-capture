@@ -17,10 +17,8 @@ ctrlc = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pcap = "2"
-nix = { version = "0.30", features = ["term", "fs"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-serialport = "4"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security",

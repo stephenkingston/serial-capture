@@ -7,7 +7,7 @@ mod output;
 mod platform_guard;
 mod resolve;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -18,10 +18,6 @@ use crate::output::TextSink;
 fn main() -> Result<()> {
     platform_guard::check();
     let args = cli::Args::parse();
-
-    if args.active {
-        return run_active(args);
-    }
 
     match install::ensure_capture_driver_installed()? {
         install::Outcome::AlreadyInstalled => {}
@@ -99,59 +95,6 @@ fn main() -> Result<()> {
     };
 
     capture::run_passive(info, decoder, options, on_event)
-}
-
-#[cfg(target_os = "linux")]
-fn run_active(args: cli::Args) -> Result<()> {
-    if args.pcap.is_some() {
-        bail!(
-            "--pcap is not supported in active mode (no USB URB stream to record). \
-             Drop --active or drop --pcap."
-        );
-    }
-
-    eprintln!("→ Active proxy mode (Linux pty bridge).");
-    let sink = TextSink::create(
-        args.output.as_deref(),
-        !args.quiet,
-        args.format,
-        args.printable_only,
-    )?;
-    let sink = std::sync::Arc::new(std::sync::Mutex::new(sink));
-
-    let written = Arc::new(AtomicUsize::new(0));
-    install_sigint_handler(written.clone(), args.output.as_deref(), None);
-
-    capture::run_active(&args.port, args.baud, sink, written)
-}
-
-#[cfg(target_os = "windows")]
-fn run_active(args: cli::Args) -> Result<()> {
-    if args.pcap.is_some() {
-        bail!(
-            "--pcap is not supported in active mode (no USB URB stream to record). \
-             Drop --active or drop --pcap."
-        );
-    }
-
-    if !install::win_com0com::is_installed() {
-        install::win_com0com::print_install_instructions();
-        bail!("com0com required for --active");
-    }
-
-    eprintln!("→ Active proxy mode (Windows com0com bridge).");
-    let sink = TextSink::create(
-        args.output.as_deref(),
-        !args.quiet,
-        args.format,
-        args.printable_only,
-    )?;
-    let sink = std::sync::Arc::new(std::sync::Mutex::new(sink));
-
-    let written = Arc::new(AtomicUsize::new(0));
-    install_sigint_handler(written.clone(), args.output.as_deref(), None);
-
-    capture::run_active(&args.port, args.baud, sink, written)
 }
 
 fn describe_dest(output: Option<&std::path::Path>, quiet: bool) -> String {

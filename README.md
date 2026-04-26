@@ -10,7 +10,6 @@ Supported chips: **CDC-ACM**, **FTDI** (FT232/FT2232/FT4232/FT-X),
 serial-capture --port /dev/ttyACM0                          # → stdout
 serial-capture --port /dev/ttyACM0 -o capture.txt
 serial-capture --port COM4         -o capture.txt --pcap capture.pcapng
-serial-capture --port COM4         -o capture.txt --active --baud 115200
 ```
 
 ## Install
@@ -37,36 +36,16 @@ Platform support:
 The unsupported platforms fail at compile time with a clear `compile_error!`
 and at runtime with an explanatory message, so misuse is hard.
 
-## Two modes
-
-### Passive (default) — captures USB URBs
+## How it works
 
 ```
 serial-capture --port COM4 -o capture.txt
 ```
 
-Uses **USBPcap** on Windows (auto-installed on first run via UAC) and
-**usbmon** on Linux. The user's application keeps talking to the real port
-unchanged; we sniff at the USB layer and decode chip-specific framing
-(FTDI's 2-byte status header, etc.) to recover serial bytes.
-
-### Active (`--active`) — proxy through a virtual port pair
-
-```
-serial-capture --port /dev/ttyUSB0 -o capture.txt --active --baud 115200
-```
-
-Creates a pty (Linux) or uses **com0com** (Windows). The tool opens the real
-port itself and exposes a virtual endpoint for the user's application; bytes
-flow through us so we can log them, no USB sniffing required. Useful when:
-
-- Passive capture is unavailable (e.g. Windows ARM64 — well, that's blocked
-  entirely; or a multi-controller box where bus mapping is unsolved)
-- You want byte-perfect logs without parsing chip framing
-- You only have user-mode access (active mode needs no kernel driver on Linux)
-
-Active mode requires the user to point their application at the printed
-virtual endpoint instead of the real port.
+Captures at the USB layer using **USBPcap** on Windows (auto-installed on
+first run via UAC) and **usbmon** on Linux. The user's application keeps
+talking to the real port unchanged; we sniff URBs and decode chip-specific
+framing (FTDI's 2-byte status header, etc.) to recover serial bytes.
 
 ## Output
 
@@ -87,8 +66,7 @@ keep-alive chatter from a text protocol.
 `--pcap FILE` additionally writes a Wireshark-compatible pcapng of the
 device's full URB stream (link types `DLT_USB_LINUX_MMAPPED` on Linux,
 `DLT_USBPCAP` on Windows). Wireshark's USB dissector reads it natively; you
-get control transfers, descriptor exchanges, and bulk traffic. Not available
-in `--active` mode (no URB stream exists at the proxy layer).
+get control transfers, descriptor exchanges, and bulk traffic.
 
 ## First-run requirements
 
@@ -133,20 +111,6 @@ and replug the target device** (USBPcap's filter driver attaches at PnP
 enumeration; existing connections aren't filtered until the device
 re-enumerates). Then re-run.
 
-### Windows active
-
-`com0com` is required and must currently be installed manually. Auto-install
-is not yet wired. The tool prints exact instructions on first run:
-
-1. Download Pete Batard's signed 2.2.2.0 build:
-   <https://files.akeo.ie/blog/com0com.7z>
-2. Extract and install (Administrator command prompt):
-   ```
-   pnputil /add-driver x64\com0com.inf /install
-   setupc.exe install
-   ```
-3. Re-run with `--active`.
-
 ## CLI reference
 
 ```
@@ -155,15 +119,9 @@ serial-capture --port <PORT> [options]
 Required
   --port <PORT>        COM4 (Windows) or /dev/ttyUSB0 / /dev/ttyACM0 (Linux)
 
-Mode
-  --active             Proxy via pty (Linux) or com0com (Windows) instead of
-                       passive USB sniffing. Requires reconfiguring the user
-                       application to the printed virtual endpoint.
-  --baud <BAUD>        Real-port baud in --active mode (default: 9600)
-
 Output
   -o, --output <FILE>  Text log path. Omit to write events to stdout.
-  --pcap <FILE>        Also write Wireshark-compatible pcapng (passive only)
+  --pcap <FILE>        Also write Wireshark-compatible pcapng
   --format <hex|ascii|both>   Text log columns (default: both)
   --printable-only     Skip events with zero text bytes
   -q, --quiet          Suppress live tail to stdout (with -o), or suppress
@@ -178,17 +136,8 @@ Decoder tuning
 ## Architecture
 
 ```
-            ┌──────────────────────────── passive (default) ────────────────────────────┐
-            │                                                                           │
-            │   Linux:    /dev/usbmonN  ──libpcap──▶  decoder  ──▶  text + pcapng       │
-User app  ──┤   Windows:  \\.\USBPcap1  ──Win32───▶  decoder  ──▶  text + pcapng       │
-   │        └───────────────────────────────────────────────────────────────────────────┘
-   │
-   │        ┌──────────────────────────── active (--active) ────────────────────────────┐
-   ▼        │                                                                           │
-[real port] │   Linux:    pty ⇄ proxy ⇄ /dev/ttyUSB0   ──tee──▶  text                  │
-            │   Windows:  CNCB0 ⇄ proxy ⇄ COM4         ──tee──▶  text                  │
-            └───────────────────────────────────────────────────────────────────────────┘
+              Linux:    /dev/usbmonN  ──libpcap──▶  decoder  ──▶  text + pcapng
+User app  ──▶ Windows:  \\.\USBPcap1  ──Win32───▶  decoder  ──▶  text + pcapng
 ```
 
 Per-chip decoders live in `src/decode/`. The CDC-ACM, CH340, and PL2303
@@ -200,8 +149,6 @@ chunk on its bulk-IN endpoint.
 
 - Hub-IOCTL endpoint discovery on Windows (current FTDI MPS is a PID-based
   heuristic; `--ftdi-mps` overrides)
-- com0com auto-install on Windows
-- Serial state mirroring in active mode (DTR/RTS/parity/break)
 - Multi-controller `\\.\USBPcapN` selection (currently hardcoded to USBPcap1)
 - Tested chip families: CDC-ACM, FTDI logic verified by unit tests; live
   end-to-end testing requires the real hardware
@@ -213,6 +160,4 @@ MIT OR Apache-2.0.
 ## Acknowledgements
 
 - [USBPcap](https://desowin.org/usbpcap/) — Windows USB packet capture driver
-- [com0com](https://com0com.sourceforge.net/) — Windows null-modem emulator
-- [Pete Batard's signed com0com 2.2.2.0 build](https://pete.akeo.ie/2011/07/com0com-signed-drivers.html)
 - Linux `usbmon` and the libpcap project
