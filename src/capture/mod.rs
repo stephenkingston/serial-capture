@@ -31,5 +31,6 @@ pub use passive_win::run_passive;
 pub struct PassiveOptions<'a> {
     pub pcap_path: Option<&'a Path>,
     /// Windows only: explicit `\\.\USBPcapN` interface override. Ignored on Linux.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub usbpcap_override: Option<&'a str>,
 }
