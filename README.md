@@ -113,7 +113,10 @@ echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf
 USBPcap is auto-installed on first run via UAC. After the install, **unplug
 and replug the target device** (USBPcap's filter driver attaches at PnP
 enumeration; existing connections aren't filtered until the device
-re-enumerates). Then re-run.
+re-enumerates). Then re-run **from an elevated shell** — USBPcap's
+installer sets an Administrators-only ACL on `\\.\USBPcapN`, so the
+capture process itself must be elevated. The tool detects non-elevated
+runs and prints instructions.
 
 **Multi-controller systems.** USBPcap installs one `\\.\USBPcapN` interface
 per USB host controller. The tool defaults to `\\.\USBPcap1`. If your

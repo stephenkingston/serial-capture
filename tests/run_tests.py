@@ -424,6 +424,18 @@ class Ctx:
         self.port = port
 
 
+def _is_admin() -> bool:
+    """True if the current process is elevated. Windows-only; returns True on
+    other platforms so callers can guard with `os.name == "nt"`."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
@@ -447,6 +459,16 @@ def main() -> int:
             pid = f"{p.pid:04x}" if p.pid is not None else "----"
             print(f"{p.device}\t{vid}:{pid}\t{p.description}")
         return 0
+
+    if os.name == "nt" and not _is_admin():
+        print(
+            "tests must run from an elevated shell — USBPcap's ACL on \\\\.\\USBPcapN\n"
+            "is Administrators-only, so the binary itself needs admin to capture.\n"
+            'Right-click PowerShell or Windows Terminal → "Run as administrator",\n'
+            "then re-run this command.",
+            file=sys.stderr,
+        )
+        return 1
 
     bin_path = Path(args.bin)
     if not bin_path.exists():

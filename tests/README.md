@@ -51,7 +51,8 @@ FTDI/CH340/PL2303 framing decoders (covered by Rust unit tests).
 
 ## Run
 
-From the repo root:
+From an **Administrator** PowerShell (USBPcap's ACL on `\\.\USBPcapN` is
+Administrators-only, so the binary needs to run elevated to capture):
 
 ```powershell
 python tests\run_tests.py

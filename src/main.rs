@@ -30,6 +30,9 @@ fn main() -> Result<()> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    require_admin_for_capture()?;
+
     let port = match args.port.as_deref() {
         Some(p) => p.to_string(),
         None => auto_detect_port()?,
@@ -100,6 +103,26 @@ fn main() -> Result<()> {
     };
 
     capture::run_passive(info, decoder, options, on_event)
+}
+
+#[cfg(target_os = "windows")]
+fn require_admin_for_capture() -> Result<()> {
+    if elevation::is_elevated()? {
+        return Ok(());
+    }
+    eprintln!("USBPcap requires Administrator privileges to capture.");
+    eprintln!();
+    eprintln!("Re-run from an elevated shell:");
+    eprintln!(r#"  • Right-click PowerShell or Windows Terminal → "Run as administrator","#);
+    eprintln!("    then re-run your command, or");
+    eprintln!("  • From any PowerShell window:");
+    eprintln!("      Start-Process powershell -Verb RunAs");
+    eprintln!();
+    eprintln!(
+        r"(USBPcap's installer sets an Administrators-only ACL on \\.\USBPcapN."
+    );
+    eprintln!("Capture inherits that, so the binary itself must be elevated.)");
+    bail!("not elevated")
 }
 
 fn auto_detect_port() -> Result<String> {
