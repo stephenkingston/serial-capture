@@ -139,28 +139,13 @@ struct Header {
 }
 
 fn preflight(bus: u16) -> Result<()> {
+    // main.rs runs install::linux_usbmon::ensure_ready before we get here.
+    // This is just a final sanity check.
     let dev_path = format!("/dev/usbmon{bus}");
-    match std::fs::metadata(&dev_path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!(
-                "{dev_path} not found — the usbmon kernel module is not loaded.\n\
-                 Run:  sudo modprobe usbmon\n\
-                 (and to load it on every boot:  echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf)"
-            );
-        }
-        Err(e) => bail!("checking {dev_path}: {e}"),
-        Ok(_) => {}
-    }
     if std::fs::File::open(&dev_path).is_err() {
         bail!(
-            "cannot open {dev_path} — permission denied.\n\
-             First-time setup: install the udev rule that grants the 'serialcap' group access:\n\
-             \n  sudo install -m 644 /dev/stdin /etc/udev/rules.d/60-serial-capture.rules <<'EOF'\n\
-             KERNEL==\"usbmon[0-9]*\", GROUP=\"serialcap\", MODE=\"0640\"\n\
-             EOF\n\
-             \n  sudo groupadd -f serialcap && sudo usermod -aG serialcap $USER\n\
-             \n  sudo udevadm control --reload && sudo udevadm trigger\n\
-             \n  # then log out and back in for the group change to take effect."
+            "cannot open {dev_path} — re-run with --yes for auto-setup, \
+             or load usbmon and grant access manually."
         );
     }
     Ok(())

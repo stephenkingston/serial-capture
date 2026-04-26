@@ -1,5 +1,8 @@
 use anyhow::Result;
 
+#[cfg(target_os = "linux")]
+pub mod linux_usbmon;
+
 #[cfg(target_os = "windows")]
 pub mod win_com0com;
 #[cfg(target_os = "windows")]

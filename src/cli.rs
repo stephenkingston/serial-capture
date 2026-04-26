@@ -36,6 +36,12 @@ pub struct Args {
     #[arg(short = 'q', long)]
     pub quiet: bool,
 
+    /// Auto-confirm setup steps that need sudo (Linux: load usbmon, relax
+    /// /dev/usbmon* permissions). Without this, you're prompted before each
+    /// sudo invocation. Has no effect when setup is already complete.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
     /// Output format for the text log.
     #[arg(long, value_enum, default_value_t = Format::Both)]
     pub format: Format,

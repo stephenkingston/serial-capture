@@ -49,6 +49,9 @@ fn main() -> Result<()> {
             .unwrap_or_default(),
     );
 
+    #[cfg(target_os = "linux")]
+    install::linux_usbmon::ensure_ready(info.bus, args.yes)?;
+
     let decoder = decode::select(
         &info,
         decode::Options {

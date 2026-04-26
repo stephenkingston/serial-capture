@@ -69,7 +69,11 @@ def _drain(stream, q: "Queue[str]") -> None:
 
 
 def start_capture(bin_path: Path, port: str, log_path: Path, *extra: str):
-    cmd = [str(bin_path), "--port", port, "-o", str(log_path), *extra]
+    # --yes auto-confirms Linux sudo prompts (load usbmon, chmod /dev/usbmon*).
+    # No-op when setup is already complete; on Windows it's silently ignored
+    # by the install path. Without it the binary would block on stdin and the
+    # reader thread would hang.
+    cmd = [str(bin_path), "--port", port, "-o", str(log_path), "--yes", *extra]
     creationflags = (
         subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     )

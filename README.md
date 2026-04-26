@@ -93,16 +93,18 @@ in `--active` mode (no URB stream exists at the proxy layer).
 
 ### Linux passive
 
-`usbmon` is in-tree. If not currently loaded:
+`usbmon` is in-tree. On first run, if `/dev/usbmonN` is missing or unreadable
+the tool offers to fix it for you — it asks before each `sudo` invocation
+(or pass `--yes` / `-y` to skip the prompts):
 
 ```
-sudo modprobe usbmon
-echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf  # persist across boots
+→ /dev/usbmon* is missing. The usbmon kernel module is not loaded.
+Run 'sudo modprobe usbmon'? [Y/n]
 ```
 
-`/dev/usbmonN` is `root:root 0600` by default. To run without sudo, install a
-udev rule and join the group (the tool prints these exact commands on first
-permission failure):
+The auto-setup loads `usbmon` and `chmod 0644`s the device files. The chmod
+is **world-readable** — fine for a dev box, but on a shared system prefer
+the persistent udev-rule approach below, which scopes access to a group:
 
 ```
 sudo install -m 644 /dev/stdin /etc/udev/rules.d/60-serial-capture.rules <<'EOF'
@@ -111,6 +113,9 @@ EOF
 sudo groupadd -f serialcap && sudo usermod -aG serialcap $USER
 sudo udevadm control --reload && sudo udevadm trigger
 # log out and back in for the group change to take effect
+
+# To survive reboots without the udev rule, persist the module load:
+echo usbmon | sudo tee /etc/modules-load.d/usbmon.conf
 ```
 
 ### Windows passive
