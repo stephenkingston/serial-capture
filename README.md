@@ -4,7 +4,8 @@ Cross-platform USB virtual COM port capture for Linux and Windows. Records
 traffic to a timestamped text log and (optionally) a Wireshark-readable pcapng.
 
 Supported chips: **CDC-ACM**, **FTDI** (FT232/FT2232/FT4232/FT-X),
-**WCH CH340/341/343/9102**, **Prolific PL2303**.
+**WCH CH340/341/343/9102**, **Prolific PL2303**, **Silicon Labs CP210x**
+(CP2102/CP2102N/CP2103/CP2104/CP2105/CP2108/CP2109).
 
 ```
 serial-capture                                              # auto-detect, → stdout
@@ -162,15 +163,17 @@ Decoder tuning
 User app  ──▶ Windows:  \\.\USBPcap1  ──Win32───▶  decoder  ──▶  text + pcapng
 ```
 
-Per-chip decoders live in `src/decode/`. The CDC-ACM, CH340, and PL2303
-decoders are passthroughs (raw bytes on bulk IN/OUT). The FTDI decoder strips
-the 2-byte modem-status header that FTDI prepends to every `wMaxPacketSize`
-chunk on its bulk-IN endpoint.
+Per-chip decoders live in `src/decode/`. The CDC-ACM, CH340, PL2303, and
+CP210x decoders are passthroughs (raw bytes on bulk IN/OUT). The FTDI decoder
+strips the 2-byte modem-status header that FTDI prepends to every
+`wMaxPacketSize` chunk on its bulk-IN endpoint.
 
 ## Limitations / future work
 
 - Hub-IOCTL endpoint discovery on Windows (current FTDI MPS is a PID-based
   heuristic; `--ftdi-mps` overrides)
+- Multi-UART CP2105/CP2108 on Windows: endpoint discovery is not implemented,
+  so traffic from all UARTs of one chip is merged into a single log
 - Auto-detect `\\.\USBPcapN` by walking the device tree to the root hub
   (today: defaults to `USBPcap1`, override with `--usbpcap`)
 - Tested chip families: CDC-ACM, FTDI logic verified by unit tests; live

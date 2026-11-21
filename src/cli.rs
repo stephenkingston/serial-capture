@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(
     name = "serial-capture",
-    about = "Capture serial traffic on a USB virtual COM port (CH340, FT232, FT2232, PL2303, CDC-ACM).",
+    about = "Capture serial traffic on a USB virtual COM port (CH340, FT232, FT2232, PL2303, CP210x, CDC-ACM).",
     version,
 )]
 pub struct Args {
