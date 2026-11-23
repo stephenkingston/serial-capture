@@ -6,18 +6,33 @@
 //! makes FTDI ports work: FTDI's driver enumerates them under `Enum\FTDIBUS`,
 //! not `Enum\USB`. Composite CDC-ACM ports (whose instance ID carries `&MI_`)
 //! resolve to the physical USB device the same way.
+//!
+//! The USB address is *not* read from the registry. `Enum\USB\...\Address` is
+//! written at install time and goes stale: on the machine this was written
+//! for, a PL2303 in port 3 reported `Address` 3 while the hub reported live
+//! address 10, so USBPcap filtered a different device and captured nothing.
+//! The parent hub's `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX` is the only
+//! reliable source.
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
-    CM_Get_Device_ID_Size, CM_Get_Device_IDW, CM_Get_Parent, CM_LOCATE_DEVNODE_NORMAL,
-    CM_Locate_DevNodeW, DICS_FLAG_GLOBAL, DIGCF_PRESENT, DIREG_DEV, GUID_DEVCLASS_PORTS,
-    HDEVINFO, SP_DEVINFO_DATA, SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo,
-    SetupDiGetClassDevsW, SetupDiGetDeviceInstanceIdW, SetupDiOpenDevRegKey,
+    CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_Device_ID_Size, CM_Get_Device_IDW,
+    CM_Get_Device_Interface_ListW, CM_Get_Parent, CM_LOCATE_DEVNODE_NORMAL, CM_Locate_DevNodeW,
+    DICS_FLAG_GLOBAL, DIGCF_PRESENT, DIREG_DEV, GUID_DEVCLASS_PORTS, HDEVINFO, SP_DEVINFO_DATA,
+    SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+    SetupDiGetDeviceInstanceIdW, SetupDiOpenDevRegKey,
 };
-use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HWND, WIN32_ERROR};
+use windows::Win32::Devices::Usb::{
+    GUID_DEVINTERFACE_USB_HUB, IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
+    IOCTL_USB_GET_NODE_INFORMATION, USB_NODE_CONNECTION_INFORMATION_EX, USB_NODE_INFORMATION,
+    USB_PIPE_INFO, DeviceConnected, UsbHub,
+};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, HWND, WIN32_ERROR,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -75,10 +90,24 @@ pub fn resolve(port: &str) -> Result<PortInfo> {
 
     let (usb_id, vid, pid, interface_number) = port_to_usb(found)
         .ok_or_else(|| anyhow!("'{want}' is not backed by a USB device"))?;
-    let devnum = usb_address(&usb_id);
-    if devnum == 0 {
-        bail!("could not read the USB device address for '{want}'; replug the device and retry");
-    }
+
+    let devnum = match live_usb_address(&usb_id, vid, pid) {
+        Some(addr) if addr != 0 => addr,
+        _ => {
+            let stale = usb_address(&usb_id);
+            if stale == 0 {
+                bail!(
+                    "could not read the USB address for '{want}' from its parent hub; \
+                     replug the device and retry"
+                );
+            }
+            eprintln!(
+                "→ Warning: could not query the parent hub for '{want}'; using the registry \
+                 address {stale}, which may be stale (run with --list-usbpcap to check)."
+            );
+            stale
+        }
+    };
 
     Ok(PortInfo {
         bus: 0, // not needed on Windows; USBPcap reports the bus per packet
@@ -142,11 +171,22 @@ pub fn print_usbpcap_diagnostics(port: Option<&str>) -> Result<()> {
         match ports.iter().find(|p| p.com.eq_ignore_ascii_case(want)) {
             Some(p) => {
                 eprintln!("Port {}: {}", p.com, p.instance_id);
-                match usb_parent_instance(&p.instance_id) {
-                    Some(usb) => eprintln!(
-                        "  USB device: {usb} (address {})",
-                        usb_address(&usb)
-                    ),
+                match port_to_usb(p) {
+                    Some((usb, vid, pid, _)) => {
+                        eprintln!("  USB device: {usb}");
+                        match live_usb_address(&usb, vid, pid) {
+                            Some(addr) => eprintln!("    address: {addr} (live, from hub)"),
+                            None => eprintln!("    address: <hub query failed>"),
+                        }
+                        let stale = usb_address(&usb);
+                        if stale != 0 {
+                            eprintln!("    registry address: {stale} (may be stale)");
+                        }
+                        match location_information(&usb) {
+                            Some(loc) => eprintln!("    location: {loc}"),
+                            None => eprintln!("    location: <none>"),
+                        }
+                    }
                     None => eprintln!("  USB device: <not USB-backed>"),
                 }
                 match root_hub_instance(&p.instance_id) {
@@ -363,6 +403,198 @@ fn usb_address(usb_instance_id: &str) -> u8 {
     }
 }
 
+struct HubConnection {
+    address: u8,
+    vid: u16,
+    pid: u16,
+}
+
+/// Ask the parent hub for the device's *current* USB address.
+///
+/// `LocationInformation` (`Port_#0003.Hub_#0006`) names the port, and the hub
+/// IOCTL reports the live address for that port. If the location is missing we
+/// scan the hub's ports and accept the address only when exactly one port
+/// matches the VID/PID.
+fn live_usb_address(usb_instance_id: &str, want_vid: u16, want_pid: u16) -> Option<u8> {
+    let mut devinst = 0u32;
+    let wide = to_wide(usb_instance_id);
+    let rc = unsafe {
+        CM_Locate_DevNodeW(
+            &mut devinst,
+            PCWSTR(wide.as_ptr()),
+            CM_LOCATE_DEVNODE_NORMAL,
+        )
+    };
+    if rc.0 != 0 {
+        return None;
+    }
+
+    let mut parent = 0u32;
+    let rc = unsafe { CM_Get_Parent(&mut parent, devinst, 0) };
+    if rc.0 != 0 {
+        return None;
+    }
+    let hub_id = device_id(parent)?;
+
+    let hub_path = hub_interface_path(&hub_id)?;
+    let handle = open_hub(&hub_path)?;
+    let _guard = HandleGuard(handle);
+
+    if let Some(port) = location_information(usb_instance_id).and_then(|loc| parse_port_number(&loc))
+        && let Some(conn) = connection_info(handle, port)
+        && conn.vid == want_vid
+        && conn.pid == want_pid
+    {
+        return Some(conn.address);
+    }
+
+    let ports = hub_port_count(handle)?;
+    let mut found = None;
+    for port in 1..=ports {
+        if let Some(conn) = connection_info(handle, port)
+            && conn.vid == want_vid
+            && conn.pid == want_pid
+        {
+            // Two identical chips on one hub: refuse to guess.
+            if found.is_some() {
+                return None;
+            }
+            found = Some(conn.address);
+        }
+    }
+    found
+}
+
+fn hub_interface_path(hub_instance_id: &str) -> Option<String> {
+    let wide = to_wide(hub_instance_id);
+    let mut buf = vec![0u16; 1024];
+    let rc = unsafe {
+        CM_Get_Device_Interface_ListW(
+            &GUID_DEVINTERFACE_USB_HUB,
+            PCWSTR(wide.as_ptr()),
+            &mut buf,
+            CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
+        )
+    };
+    if rc.0 != 0 {
+        return None;
+    }
+    let n = buf.iter().position(|&c| c == 0)?;
+    if n == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buf[..n]))
+}
+
+fn open_hub(path: &str) -> Option<HANDLE> {
+    let wide = to_wide(path);
+    unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            GENERIC_WRITE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+    }
+    .ok()
+}
+
+fn connection_info(handle: HANDLE, port: u32) -> Option<HubConnection> {
+    let in_size = std::mem::size_of::<USB_NODE_CONNECTION_INFORMATION_EX>();
+    // Room for the pipes the hub may report after the fixed header.
+    let out_size = in_size + 8 * std::mem::size_of::<USB_PIPE_INFO>();
+
+    let mut input = vec![0u8; in_size];
+    input[..4].copy_from_slice(&port.to_le_bytes());
+    let mut output = vec![0u8; out_size];
+    let mut returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
+            Some(input.as_ptr() as *const _),
+            in_size as u32,
+            Some(output.as_mut_ptr() as *mut _),
+            out_size as u32,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .ok()?;
+    if (returned as usize) < in_size {
+        return None;
+    }
+
+    let info = unsafe {
+        std::ptr::read_unaligned(output.as_ptr() as *const USB_NODE_CONNECTION_INFORMATION_EX)
+    };
+    // Copy out of the packed struct before comparing: taking a reference to a
+    // field of a `repr(packed)` type is unaligned.
+    let status = info.ConnectionStatus;
+    if status != DeviceConnected {
+        return None;
+    }
+    let address = info.DeviceAddress;
+    let descriptor = info.DeviceDescriptor;
+    Some(HubConnection {
+        address: address as u8,
+        vid: descriptor.idVendor,
+        pid: descriptor.idProduct,
+    })
+}
+
+fn hub_port_count(handle: HANDLE) -> Option<u32> {
+    let size = std::mem::size_of::<USB_NODE_INFORMATION>();
+    let node = USB_NODE_INFORMATION {
+        NodeType: UsbHub,
+        ..Default::default()
+    };
+
+    let mut output = vec![0u8; size];
+    let mut returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_USB_GET_NODE_INFORMATION,
+            Some(&node as *const _ as *const _),
+            size as u32,
+            Some(output.as_mut_ptr() as *mut _),
+            size as u32,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .ok()?;
+    if (returned as usize) < size {
+        return None;
+    }
+
+    let info =
+        unsafe { std::ptr::read_unaligned(output.as_ptr() as *const USB_NODE_INFORMATION) };
+    let ports = unsafe { info.u.HubInformation.HubDescriptor.bNumberOfPorts };
+    Some(ports as u32)
+}
+
+/// `Port_#0003.Hub_#0006` → 3.
+fn parse_port_number(location: &str) -> Option<u32> {
+    let rest = location.split("Port_#").nth(1)?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// `LocationInformation` looks like `Port_#0002.Hub_#0005` and is the quickest
+/// way to match a device against the hub tree shown in Device Manager.
+fn location_information(usb_instance_id: &str) -> Option<String> {
+    let path = format!(r"SYSTEM\CurrentControlSet\Enum\{usb_instance_id}");
+    let handle = open_subkey(HKEY_LOCAL_MACHINE, &path).ok()?;
+    let value = read_string_value(handle, "LocationInformation");
+    unsafe { let _ = RegCloseKey(handle); }
+    value.filter(|s| !s.trim().is_empty())
+}
+
 /// Normalize both CfgMgr instance IDs (`USB\ROOT_HUB30\4&...`) and USBPcap's
 /// hub symlinks (`\\?\USB#ROOT_HUB30#4&...#{guid}`) to a comparable form.
 fn normalize_device_path(s: &str) -> String {
@@ -419,6 +651,13 @@ struct DevInfoGuard(HDEVINFO);
 impl Drop for DevInfoGuard {
     fn drop(&mut self) {
         unsafe { let _ = SetupDiDestroyDeviceInfoList(self.0); }
+    }
+}
+
+struct HandleGuard(HANDLE);
+impl Drop for HandleGuard {
+    fn drop(&mut self) {
+        unsafe { let _ = CloseHandle(self.0); }
     }
 }
 
@@ -561,6 +800,14 @@ mod tests {
             Some(0)
         );
         assert_eq!(parse_interface(r"USB\VID_067B&PID_2303\5&2a3b"), None);
+    }
+
+    #[test]
+    fn parses_port_number_from_location() {
+        assert_eq!(parse_port_number("Port_#0003.Hub_#0006"), Some(3));
+        assert_eq!(parse_port_number("Port_#0014.Hub_#0002"), Some(14));
+        assert_eq!(parse_port_number("-"), None);
+        assert_eq!(parse_port_number(""), None);
     }
 
     #[test]

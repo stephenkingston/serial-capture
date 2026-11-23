@@ -125,6 +125,13 @@ that enumerate outside `Enum\USB` (notably FTDI's `FTDIBUS` enumerator) and
 composite CDC-ACM interfaces, and it ignores unplugged devices that linger in
 the registry as "ghost" COM ports.
 
+The USB address used for capture comes from the parent hub
+(`IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX`), not from the registry. The
+`Address` value under `Enum\USB\...` is written at install time and can be
+stale — a PL2303 in hub port 3 reported `Address` 3 while its live address was
+10, so filtering by the registry value captured a different device (or
+nothing).
+
 **Multi-controller systems.** USBPcap installs one `\\.\USBPcapN` interface
 per USB host controller. The tool selects the interface attached to the
 device's root hub, and stops with instructions if it cannot pick one.
