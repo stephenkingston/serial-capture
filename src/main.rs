@@ -80,9 +80,30 @@ fn main() -> Result<()> {
         args.printable_only,
     )?;
 
+    // USBPcap exposes one interface per host controller. When the user didn't
+    // pick one explicitly, select the interface attached to the device's root
+    // hub — the default `\\.\USBPcap1` silently captures nothing when the
+    // device hangs off a different controller (common with external hubs).
+    #[cfg(target_os = "windows")]
+    let auto_usbpcap = if args.usbpcap.is_none() {
+        match resolve::auto_usbpcap(&port) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("→ USBPcap auto-detect failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "windows"))]
+    let auto_usbpcap: Option<String> = None;
+
+    let usbpcap = args.usbpcap.clone().or(auto_usbpcap);
+
     let options = capture::PassiveOptions {
         pcap_path: args.pcap.as_deref(),
-        usbpcap_override: args.usbpcap.as_deref(),
+        usbpcap_override: usbpcap.as_deref(),
     };
     if let Some(p) = options.pcap_path {
         eprintln!("→ Pcapng to {}", p.display());

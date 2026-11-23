@@ -119,12 +119,17 @@ installer sets an Administrators-only ACL on `\\.\USBPcapN`, so the
 capture process itself must be elevated. The tool detects non-elevated
 runs and prints instructions.
 
+**Port resolution.** Present ports are enumerated through SetupAPI and then
+walked up the device tree to the underlying USB device. This covers drivers
+that enumerate outside `Enum\USB` (notably FTDI's `FTDIBUS` enumerator) and
+composite CDC-ACM interfaces, and it ignores unplugged devices that linger in
+the registry as "ghost" COM ports.
+
 **Multi-controller systems.** USBPcap installs one `\\.\USBPcapN` interface
-per USB host controller. The tool defaults to `\\.\USBPcap1`. If your
-device is on a different controller, capture will silently produce no
-traffic — pass `--usbpcap '\\.\USBPcap2'` (or 3, 4, …) to pick the right
-one. Wireshark's interface list (or `dumpcap -D`) shows which `USBPcapN`
-sees the device.
+per USB host controller. The tool selects the interface attached to the
+device's root hub; if auto-detection fails it falls back to `\\.\USBPcap1`.
+Override with `--usbpcap '\\.\USBPcap2'` (or 3, 4, …). Wireshark's interface
+list (or `dumpcap -D`) shows which `USBPcapN` sees the device.
 
 ## CLI reference
 
@@ -174,8 +179,6 @@ strips the 2-byte modem-status header that FTDI prepends to every
   heuristic; `--ftdi-mps` overrides)
 - Multi-UART CP2105/CP2108 on Windows: endpoint discovery is not implemented,
   so traffic from all UARTs of one chip is merged into a single log
-- Auto-detect `\\.\USBPcapN` by walking the device tree to the root hub
-  (today: defaults to `USBPcap1`, override with `--usbpcap`)
 - Tested chip families: CDC-ACM, FTDI logic verified by unit tests; live
   end-to-end testing requires the real hardware
 
