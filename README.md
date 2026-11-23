@@ -127,9 +127,29 @@ the registry as "ghost" COM ports.
 
 **Multi-controller systems.** USBPcap installs one `\\.\USBPcapN` interface
 per USB host controller. The tool selects the interface attached to the
-device's root hub; if auto-detection fails it falls back to `\\.\USBPcap1`.
-Override with `--usbpcap '\\.\USBPcap2'` (or 3, 4, …). Wireshark's interface
-list (or `dumpcap -D`) shows which `USBPcapN` sees the device.
+device's root hub, and stops with instructions if it cannot pick one.
+Override with `--usbpcap '\\.\USBPcap2'` (or 3, 4, …).
+
+**When nothing appears.** Two things are worth checking first, and neither
+needs Wireshark:
+
+1. `--list-usbpcap` prints every present port with its USB parent, address and
+   root hub, plus each `USBPcapN` and the hub it is attached to. It runs
+   without Administrator. Compare the normalized root hubs to see which
+   interface the device is on.
+2. `--debug-usb` ignores the address filter and prints one line per USB packet
+   on the chosen interface: `[usb] dev 5 ep 0x81 bulk len 64 …`. Generate
+   serial traffic, and the line shows the real device address. If the address
+   differs from the one Windows reports, pass `--usb-address <N>`.
+
+Writing to the port under capture is enough to produce traffic — no second
+board needed. In a second window:
+
+```powershell
+$p = [System.IO.Ports.SerialPort]::new('COM6', 115200)
+$p.Open(); 1..20 | ForEach-Object { $p.WriteLine("ping $_") ; Start-Sleep -m 200 }
+$p.Close()
+```
 
 ## CLI reference
 
@@ -152,8 +172,16 @@ Output
 First-run / privileges
   -y, --yes            Linux: auto-confirm sudo prompts (load usbmon, write
                        udev rule). No effect when setup is already complete.
-  --usbpcap <NAME>     Windows: pick a specific filter interface, e.g.
-                       '\\.\USBPcap2'. Defaults to '\\.\USBPcap1'.
+
+Windows
+  --usbpcap <NAME>     Pick a specific filter interface, e.g.
+                       '\\.\USBPcap2'. Defaults to the interface attached to
+                       the device's root hub.
+  --list-usbpcap       Print present ports, root hubs and every USBPcap
+                       interface, then exit. Works without Administrator.
+  --debug-usb          Capture all devices and print one line per USB packet.
+                       Use it to find the real device address.
+  --usb-address <N>    Override the USB device address used for filtering.
 
 Decoder tuning
   --ftdi-mps <BYTES>   Force FTDI bulk-IN wMaxPacketSize (64 or 512). Use only

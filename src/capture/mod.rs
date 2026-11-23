@@ -33,4 +33,9 @@ pub struct PassiveOptions<'a> {
     /// Windows only: explicit `\\.\USBPcapN` interface override. Ignored on Linux.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub usbpcap_override: Option<&'a str>,
+    /// Windows only: capture *every* device on the interface and print a
+    /// one-line summary per packet. Diagnostic mode for when the selected
+    /// device address shows no traffic. Ignored on Linux.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub debug_all: bool,
 }

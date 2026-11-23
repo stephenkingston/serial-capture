@@ -52,8 +52,16 @@ pub fn run_passive(
     let handle = open_usbpcap(iface)?;
     let _guard = HandleGuard(handle);
 
+    let debug_all = options.debug_all;
+    if debug_all {
+        eprintln!(
+            "→ Probe mode: capturing every device on {iface}. \
+             Generate serial traffic on both boards, then read the dev/type columns."
+        );
+    }
+
     setup_buffer(handle, CAPTURE_BUFFER_BYTES)?;
-    start_filtering(handle, info.devnum)?;
+    start_filtering(handle, info.devnum, debug_all)?;
 
     let mut header = [0u8; 24];
     read_exact(handle, &mut header).context("reading USBPcap pcap file header")?;
@@ -92,6 +100,10 @@ pub fn run_passive(
         let ts = OffsetDateTime::from_unix_timestamp(ts_sec)
             .unwrap_or_else(|_| OffsetDateTime::now_utc())
             + TimeDuration::microseconds(ts_usec);
+
+        if debug_all && pkt.data_length > 0 {
+            print_packet_summary(&pkt);
+        }
 
         // Tee URB to pcap before bulk filtering so control transfers, etc., are
         // also recorded for Wireshark — filter only by device address here since
@@ -147,6 +159,26 @@ struct ParsedPacket<'a> {
     transfer: u8,
     data_length: u32,
     payload: &'a [u8],
+}
+
+fn print_packet_summary(pkt: &ParsedPacket<'_>) {
+    let kind = match pkt.transfer {
+        USBPCAP_TRANSFER_BULK => "bulk",
+        1 => "intr",
+        2 => "ctrl",
+        0 => "iso",
+        _ => "other",
+    };
+    let n = pkt.payload.len().min(12);
+    let hex = pkt.payload[..n]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!(
+        "  [usb] dev {:>3} ep 0x{:02x} {:>5} len {:>4}  {hex}",
+        pkt.device, pkt.endpoint, kind, pkt.data_length
+    );
 }
 
 fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
@@ -241,7 +273,7 @@ struct UsbpcapAddressFilter {
 
 const _: () = assert!(std::mem::size_of::<UsbpcapAddressFilter>() == 17);
 
-fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
+fn start_filtering(handle: HANDLE, address: u8, filter_all: bool) -> Result<()> {
     // Build the bit array in a local before constructing the packed struct,
     // since taking references to fields of a packed struct is unsafe in Rust.
     let mut addresses = [0u32; 4];
@@ -252,7 +284,7 @@ fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
     }
     let filter = UsbpcapAddressFilter {
         addresses,
-        filter_all: 0,
+        filter_all: u8::from(filter_all),
     };
     let mut returned = 0u32;
     unsafe {

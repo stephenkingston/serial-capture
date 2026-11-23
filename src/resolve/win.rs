@@ -104,20 +104,103 @@ pub fn auto_usbpcap(port: &str) -> Result<Option<String>> {
     let Some(found) = ports.iter().find(|p| p.com.eq_ignore_ascii_case(want)) else {
         return Ok(None);
     };
-    let Some(root) = root_hub_instance(&found.instance_id) else {
-        return Ok(None);
-    };
-    let root = normalize_device_path(&root);
 
+    // Collect every interface that answers, so a single-controller machine
+    // still works when the root-hub comparison fails for some reason (for
+    // example an older USBPcap driver without GET_HUB_SYMLINK support).
+    let mut available: Vec<(String, String)> = Vec::new();
     for n in 1..=32u32 {
         let name = format!(r"\\.\USBPcap{n}");
-        if let Some(symlink) = usbpcap_hub_symlink(&name)
-            && normalize_device_path(&symlink) == root
-        {
-            return Ok(Some(name));
+        if let Some(symlink) = usbpcap_hub_symlink(&name) {
+            available.push((name, normalize_device_path(&symlink)));
         }
     }
+    if available.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(root) = root_hub_instance(&found.instance_id) {
+        let root = normalize_device_path(&root);
+        if let Some((name, _)) = available.iter().find(|(_, hub)| *hub == root) {
+            return Ok(Some(name.clone()));
+        }
+    }
+
+    if available.len() == 1 {
+        return Ok(Some(available.remove(0).0));
+    }
     Ok(None)
+}
+
+/// Print the root hub of the selected port and of every USBPcap interface.
+/// Used by `--list-usbpcap` when automatic interface selection fails.
+pub fn print_usbpcap_diagnostics(port: Option<&str>) -> Result<()> {
+    let ports = present_ports()?;
+
+    if let Some(want) = port {
+        let want = want.trim();
+        match ports.iter().find(|p| p.com.eq_ignore_ascii_case(want)) {
+            Some(p) => {
+                eprintln!("Port {}: {}", p.com, p.instance_id);
+                match usb_parent_instance(&p.instance_id) {
+                    Some(usb) => eprintln!(
+                        "  USB device: {usb} (address {})",
+                        usb_address(&usb)
+                    ),
+                    None => eprintln!("  USB device: <not USB-backed>"),
+                }
+                match root_hub_instance(&p.instance_id) {
+                    Some(root) => {
+                        eprintln!("  Root hub: {root}");
+                        eprintln!(
+                            "  Root hub (normalized): {}",
+                            normalize_device_path(&root)
+                        );
+                    }
+                    None => eprintln!("  Root hub: <unknown>"),
+                }
+            }
+            None => {
+                let names = ports
+                    .iter()
+                    .map(|p| p.com.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("Port {want}: not present (present: {names})");
+            }
+        }
+    } else {
+        eprintln!("Present ports:");
+        for p in &ports {
+            eprintln!("  {}: {}", p.com, p.instance_id);
+        }
+    }
+
+    eprintln!("USBPcap interfaces:");
+    let mut found = 0;
+    for n in 1..=32u32 {
+        let name = format!(r"\\.\USBPcap{n}");
+        match usbpcap_hub_symlink(&name) {
+            Some(hub) => {
+                eprintln!("  {name}");
+                eprintln!("    hub: {hub}");
+                eprintln!("    normalized: {}", normalize_device_path(&hub));
+                found += 1;
+            }
+            None if found > 0 => break,
+            None => {}
+        }
+    }
+    if found == 0 {
+        eprintln!("  <none — is USBPcap installed? try an elevated shell>");
+    } else if let Some(want) = port {
+        match auto_usbpcap(want) {
+            Ok(Some(name)) => eprintln!("Match: {name}"),
+            Ok(None) => eprintln!("Match: none"),
+            Err(e) => eprintln!("Match error: {e}"),
+        }
+    }
+    Ok(())
 }
 
 struct PresentPort {
@@ -224,19 +307,21 @@ fn root_hub_instance(instance_id: &str) -> Option<String> {
         return None;
     }
 
-    let mut last = device_id(devinst)?;
+    // Stop at the USB root hub. Continuing further would walk into the PCI
+    // host controller, whose instance ID never matches USBPcap's hub symlink.
     for _ in 0..16 {
+        let id = device_id(devinst)?;
+        if id.starts_with("USB\\ROOT_HUB") {
+            return Some(id);
+        }
         let mut parent = 0u32;
         let rc = unsafe { CM_Get_Parent(&mut parent, devinst, 0) };
         if rc.0 != 0 {
-            break;
+            return None;
         }
         devinst = parent;
-        if let Some(id) = device_id(devinst) {
-            last = id;
-        }
     }
-    Some(last)
+    None
 }
 
 fn device_id(devinst: u32) -> Option<String> {

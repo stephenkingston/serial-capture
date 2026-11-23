@@ -30,6 +30,18 @@ fn main() -> Result<()> {
         }
     }
 
+    // Diagnostics that only need USBPcap's unprivileged hub-symlink IOCTL run
+    // before the elevation check, so a normal shell can print them.
+    #[cfg(target_os = "windows")]
+    if args.list_usbpcap {
+        resolve::print_usbpcap_diagnostics(args.port.as_deref())?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    if args.list_usbpcap {
+        bail!("--list-usbpcap is only supported on Windows");
+    }
+
     #[cfg(target_os = "windows")]
     require_admin_for_capture()?;
 
@@ -37,8 +49,16 @@ fn main() -> Result<()> {
         Some(p) => p.to_string(),
         None => auto_detect_port()?,
     };
-    let info = resolve::resolve(&port)
+    let mut info = resolve::resolve(&port)
         .with_context(|| format!("resolving port '{port}'"))?;
+
+    if let Some(addr) = args.usb_address {
+        eprintln!(
+            "→ Overriding USB device address: {} → {addr}",
+            info.devnum
+        );
+        info.devnum = addr;
+    }
 
     eprintln!(
         "→ Port {}: bus {} device {} VID:PID {:04x}:{:04x}{}",
@@ -101,9 +121,18 @@ fn main() -> Result<()> {
 
     let usbpcap = args.usbpcap.clone().or(auto_usbpcap);
 
+    #[cfg(target_os = "windows")]
+    if usbpcap.is_none() {
+        eprintln!("→ Could not determine which USBPcap interface sees this device.");
+        eprintln!("  Run with --list-usbpcap to compare root hubs, then pass");
+        eprintln!("  --usbpcap '\\\\.\\USBPcapN' explicitly.");
+        bail!("USBPcap interface not auto-detected");
+    }
+
     let options = capture::PassiveOptions {
         pcap_path: args.pcap.as_deref(),
         usbpcap_override: usbpcap.as_deref(),
+        debug_all: args.debug_usb,
     };
     if let Some(p) = options.pcap_path {
         eprintln!("→ Pcapng to {}", p.display());

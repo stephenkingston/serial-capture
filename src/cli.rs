@@ -51,10 +51,28 @@ pub struct Args {
     /// Windows only: pick a specific USBPcap interface (e.g.
     /// `\\.\USBPcap2`). USBPcap installs one filter per host controller; a
     /// device on a controller other than the first won't show traffic on
-    /// `\\.\USBPcap1`. Defaults to auto-detect, falling back to
-    /// `\\.\USBPcap1` if detection fails.
+    /// `\\.\USBPcap1`. Defaults to matching the device's root hub, and fails
+    /// with instructions if no interface matches.
     #[arg(long, value_name = "NAME")]
     pub usbpcap: Option<String>,
+
+    /// Windows only: print the root hub of each USBPcap interface and of the
+    /// selected port, then exit. Use this when auto-detection fails.
+    #[arg(long)]
+    pub list_usbpcap: bool,
+
+    /// Windows only: capture every device on the selected USBPcap interface and
+    /// print a one-line summary per packet (`dev`, endpoint, transfer type,
+    /// length, first bytes). Use this to find the real device address when the
+    /// port shows no traffic.
+    #[arg(long)]
+    pub debug_usb: bool,
+
+    /// Windows only: override the USB device address used for filtering. Use
+    /// when the address reported by Windows is stale (the probe output shows
+    /// the real one).
+    #[arg(long, value_name = "N")]
+    pub usb_address: Option<u8>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
