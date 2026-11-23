@@ -53,10 +53,11 @@ pub fn run_passive(
     let _guard = HandleGuard(handle);
 
     let debug_all = options.debug_all;
+    let mut probe = Probe::default();
     if debug_all {
         eprintln!(
             "→ Probe mode: capturing every device on {iface}. \
-             Generate serial traffic on both boards, then read the dev/type columns."
+             Generate serial traffic on the port, then read the bus/dev columns."
         );
     }
 
@@ -102,7 +103,7 @@ pub fn run_passive(
             + TimeDuration::microseconds(ts_usec);
 
         if debug_all && pkt.data_length > 0 {
-            print_packet_summary(&pkt);
+            probe.record(&pkt);
         }
 
         // Tee URB to pcap before bulk filtering so control transfers, etc., are
@@ -154,6 +155,7 @@ pub fn run_passive(
 }
 
 struct ParsedPacket<'a> {
+    bus: u16,
     device: u16,
     endpoint: u8,
     transfer: u8,
@@ -161,24 +163,43 @@ struct ParsedPacket<'a> {
     payload: &'a [u8],
 }
 
-fn print_packet_summary(pkt: &ParsedPacket<'_>) {
-    let kind = match pkt.transfer {
-        USBPCAP_TRANSFER_BULK => "bulk",
-        1 => "intr",
-        2 => "ctrl",
-        0 => "iso",
-        _ => "other",
-    };
-    let n = pkt.payload.len().min(12);
-    let hex = pkt.payload[..n]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    eprintln!(
-        "  [usb] dev {:>3} ep 0x{:02x} {:>5} len {:>4}  {hex}",
-        pkt.device, pkt.endpoint, kind, pkt.data_length
-    );
+/// Rate-limited packet printer for `--debug-usb`. A busy bus (a USB NIC, for
+/// example) produces thousands of packets per second; printing the first few of
+/// each `(bus, device, endpoint, transfer)` stream and then every 200th keeps
+/// the interesting UART traffic visible.
+#[derive(Default)]
+struct Probe {
+    seen: std::collections::HashMap<(u16, u16, u8, u8), usize>,
+}
+
+impl Probe {
+    fn record(&mut self, pkt: &ParsedPacket<'_>) {
+        let key = (pkt.bus, pkt.device, pkt.endpoint, pkt.transfer);
+        let count = self.seen.entry(key).or_insert(0);
+        *count += 1;
+        if *count > 3 && !(*count).is_multiple_of(200) {
+            return;
+        }
+
+        let kind = match pkt.transfer {
+            USBPCAP_TRANSFER_BULK => "bulk",
+            1 => "intr",
+            2 => "ctrl",
+            0 => "iso",
+            _ => "other",
+        };
+        let dir = if pkt.endpoint & 0x80 != 0 { "in " } else { "out" };
+        let n = pkt.payload.len().min(12);
+        let hex = pkt.payload[..n]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!(
+            "  [usb] bus {} dev {:>3} ep 0x{:02x} {kind}-{dir} x{count:<5} len {:>4}  {hex}",
+            pkt.bus, pkt.device, pkt.endpoint, pkt.data_length
+        );
+    }
 }
 
 fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
@@ -200,6 +221,7 @@ fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
     if header_len < 27 || header_len > buf.len() {
         return None;
     }
+    let bus = u16::from_le_bytes(buf[17..19].try_into().unwrap());
     let device = u16::from_le_bytes(buf[19..21].try_into().unwrap());
     let endpoint = buf[21];
     let transfer = buf[22];
@@ -210,6 +232,7 @@ fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
         return None;
     }
     Some(ParsedPacket {
+        bus,
         device,
         endpoint,
         transfer,
