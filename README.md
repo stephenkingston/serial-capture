@@ -175,6 +175,10 @@ Output
   --printable-only     Skip events with zero text bytes
   -q, --quiet          Suppress live tail to stdout (with -o), or suppress
                        all text output (without -o; useful with --pcap)
+  --no-assemble        Print one row per captured URB. By default consecutive
+                       URBs are joined and split on newlines, so a line stays
+                       one row even when the driver delivers it byte by byte
+                       (PL2303 on Windows does this).
 
 First-run / privileges
   -y, --yes            Linux: auto-confirm sudo prompts (load usbmon, write
@@ -207,6 +211,13 @@ Per-chip decoders live in `src/decode/`. The CDC-ACM, CH340, PL2303, and
 CP210x decoders are passthroughs (raw bytes on bulk IN/OUT). The FTDI decoder
 strips the 2-byte modem-status header that FTDI prepends to every
 `wMaxPacketSize` chunk on its bulk-IN endpoint.
+
+Text output is line-oriented: bytes from consecutive URBs in the same
+direction are joined, split on `\n`, and flushed when the direction changes or
+the stream stalls for 50 ms. This matters on Windows, where the PL2303 driver
+reads one byte at a time — without it a single line would print as one row per
+character. `--no-assemble` restores per-URB rows; `--pcap` always stores the
+raw URBs.
 
 ## Limitations / future work
 

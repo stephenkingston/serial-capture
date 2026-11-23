@@ -32,6 +32,12 @@ pub struct Args {
     #[arg(short = 'q', long)]
     pub quiet: bool,
 
+    /// Print one row per captured URB instead of reassembling lines. By
+    /// default bytes from consecutive URBs are joined and split on newlines,
+    /// because some drivers (PL2303 on Windows) deliver one byte at a time.
+    #[arg(long)]
+    pub no_assemble: bool,
+
     /// Auto-confirm setup steps that need sudo (Linux: load usbmon, relax
     /// /dev/usbmon* permissions). Without this, you're prompted before each
     /// sudo invocation. Has no effect when setup is already complete.
