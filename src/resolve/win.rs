@@ -339,7 +339,7 @@ impl Drop for DevInfoGuard {
 
 fn parse_interface(instance_id: &str) -> Option<u8> {
     instance_id
-        .split(|c| c == '&' || c == '\\')
+        .split(['&', '\\'])
         .find_map(|part| part.strip_prefix("MI_"))
         .and_then(|s| u8::from_str_radix(s, 16).ok())
 }
@@ -348,7 +348,7 @@ fn parse_vidpid(s: &str) -> Option<(u16, u16, Option<u8>)> {
     let mut vid: Option<u16> = None;
     let mut pid: Option<u16> = None;
     let mut mi: Option<u8> = None;
-    for part in s.split(|c| c == '&' || c == '\\' || c == '+') {
+    for part in s.split(['&', '\\', '+']) {
         if let Some(v) = part.strip_prefix("VID_") {
             vid = u16::from_str_radix(v, 16).ok();
         } else if let Some(p) = part.strip_prefix("PID_") {
