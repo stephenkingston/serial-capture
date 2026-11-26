@@ -10,16 +10,19 @@ pub trait Decoder: Send {
 
 mod cdc_acm;
 mod ch340;
+mod cp210x;
 mod ftdi;
 mod pl2303;
 pub use cdc_acm::CdcAcm;
 pub use ch340::Ch340;
+pub use cp210x::Cp210x;
 pub use ftdi::Ftdi;
 pub use pl2303::Pl2303;
 
 /// USB Vendor IDs.
 const VID_FTDI: u16 = 0x0403;
 const VID_PROLIFIC: u16 = 0x067b;
+const VID_SILABS: u16 = 0x10c4;
 const VID_WCH: u16 = 0x1a86;
 
 /// Selection options forwarded from the CLI.
@@ -46,6 +49,7 @@ pub fn select(info: &PortInfo, opts: Options) -> Box<dyn Decoder> {
         }
         VID_WCH => Box::new(Ch340),
         VID_PROLIFIC => Box::new(Pl2303),
+        VID_SILABS => Box::new(Cp210x),
         _ => Box::new(CdcAcm),
     }
 }
@@ -139,6 +143,15 @@ mod tests {
     }
 
     #[test]
+    fn cp210x_vid_selects_cp210x() {
+        // CP2102, CP2102N, CP2104, CP2105, CP2108 all share the SiLabs VID.
+        for pid in [0xea60, 0xea63, 0xea70, 0xea71, 0xea7a] {
+            let i = info(VID_SILABS, pid, None);
+            assert_eq!(select(&i, Options::default()).name(), "cp210x");
+        }
+    }
+
+    #[test]
     fn ch340_passthrough_in_and_out() {
         let mut d = Ch340;
         let mut out = Vec::new();
@@ -150,6 +163,15 @@ mod tests {
     #[test]
     fn pl2303_passthrough_in_and_out() {
         let mut d = Pl2303;
+        let mut out = Vec::new();
+        d.decode(Direction::In, b"hello", &mut out);
+        d.decode(Direction::Out, b" world", &mut out);
+        assert_eq!(out, b"hello world");
+    }
+
+    #[test]
+    fn cp210x_passthrough_in_and_out() {
+        let mut d = Cp210x;
         let mut out = Vec::new();
         d.decode(Direction::In, b"hello", &mut out);
         d.decode(Direction::Out, b" world", &mut out);

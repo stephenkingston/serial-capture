@@ -1,0 +1,48 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Show binary info
+        run: |
+          Get-Item target/release/serial-capture.exe | Format-List Name,Length
+          & target/release/serial-capture.exe --version
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-capture-windows-x86_64
+          path: target/release/serial-capture.exe
+          if-no-files-found: error
+
+      - name: Attach exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/serial-capture.exe

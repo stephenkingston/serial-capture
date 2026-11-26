@@ -9,7 +9,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::core::PCWSTR;
 
-use super::{Direction, Event, PassiveOptions};
+use super::{Direction, Event, PassiveOptions, Stats};
 use crate::decode::Decoder;
 use crate::output::PcapSink;
 use crate::resolve::PortInfo;
@@ -25,8 +25,21 @@ const DLT_USBPCAP: u32 = 249;
 const IOCTL_USBPCAP_SETUP_BUFFER: u32 = 0x0022_6000;
 const IOCTL_USBPCAP_START_FILTERING: u32 = 0x0022_E004;
 
-const CAPTURE_BUFFER_BYTES: u32 = 1 << 20; // 1 MB
 const USBPCAP_TRANSFER_BULK: u8 = 3;
+
+/// Size of the userspace read buffer. USBPcap's control device returns as many
+/// queued records as fit in one `ReadFile`, so this is the main lever for
+/// keeping up with one-byte-per-URB drivers.
+const READ_CHUNK: usize = 256 * 1024;
+/// Sanity bound while resyncing; a USBPcap record is at most one bulk packet
+/// (64 KiB) plus its header.
+const MAX_PACKET_BYTES: usize = 1 << 20;
+
+/// USBPcap's driver accepts 4 KiB … 128 MiB; we clamp to keep a typo from
+/// asking the kernel for a gigabyte of non-paged pool.
+fn clamp_buffer_bytes(bytes: u32) -> u32 {
+    bytes.clamp(4 * 1024, 128 * 1024 * 1024)
+}
 
 pub fn run_passive(
     info: PortInfo,
@@ -52,8 +65,23 @@ pub fn run_passive(
     let handle = open_usbpcap(iface)?;
     let _guard = HandleGuard(handle);
 
-    setup_buffer(handle, CAPTURE_BUFFER_BYTES)?;
-    start_filtering(handle, info.devnum)?;
+    let debug_all = options.debug_all;
+    let mut probe = Probe::default();
+    if debug_all {
+        eprintln!(
+            "→ Probe mode: capturing every device on {iface}. \
+             Generate serial traffic on the port, then read the bus/dev columns."
+        );
+    }
+
+    let buffer_bytes = clamp_buffer_bytes(options.usbpcap_buffer_bytes);
+    eprintln!(
+        "→ USBPcap buffer: {} KiB (driver ring buffer; larger absorbs longer reader stalls)",
+        buffer_bytes / 1024
+    );
+    setup_buffer(handle, buffer_bytes)?;
+    start_filtering(handle, info.devnum, debug_all)?;
+    let stats = options.stats;
 
     let mut header = [0u8; 24];
     read_exact(handle, &mut header).context("reading USBPcap pcap file header")?;
@@ -68,30 +96,57 @@ pub fn run_passive(
     };
 
     let mut decoded: Vec<u8> = Vec::with_capacity(4096);
-    let mut pkthdr = [0u8; 16];
-    let mut pkt_buf: Vec<u8> = Vec::with_capacity(65536);
+    // Drain the driver's ring buffer one big chunk at a time. A ReadFile on
+    // USBPcap returns as many queued pcap records as fit, so this turns
+    // thousands of one-byte PL2303 URBs into a handful of syscalls per second.
+    let mut rx = vec![0u8; READ_CHUNK];
+    let mut rx_len = 0usize;
+    let mut rx_pos = 0usize;
 
     loop {
-        read_exact(handle, &mut pkthdr).context("reading per-packet pcap header")?;
-        let ts_sec = u32::from_le_bytes(pkthdr[0..4].try_into().unwrap()) as i64;
-        let ts_usec = u32::from_le_bytes(pkthdr[4..8].try_into().unwrap()) as i64;
-        let incl_len = u32::from_le_bytes(pkthdr[8..12].try_into().unwrap()) as usize;
-
-        if incl_len > pkt_buf.capacity() {
-            pkt_buf.reserve(incl_len - pkt_buf.capacity());
+        if rx_len - rx_pos < 16 {
+            refill(handle, &mut rx, &mut rx_len, &mut rx_pos)?;
+            continue;
         }
-        pkt_buf.resize(incl_len, 0);
-        read_exact(handle, &mut pkt_buf).context("reading USBPcap packet body")?;
+        let hdr = &rx[rx_pos..rx_pos + 16];
+        let ts_sec = u32::from_le_bytes(hdr[0..4].try_into().unwrap()) as i64;
+        let ts_usec = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as i64;
+        let incl_len = u32::from_le_bytes(hdr[8..12].try_into().unwrap()) as usize;
+        if incl_len > MAX_PACKET_BYTES {
+            bail!("USBPcap record claims {incl_len} bytes; stream is out of sync");
+        }
+        if rx_len - rx_pos < 16 + incl_len {
+            refill(handle, &mut rx, &mut rx_len, &mut rx_pos)?;
+            continue;
+        }
 
-        let pkt = parse_packet(&pkt_buf);
+        let end = rx_pos + 16 + incl_len;
+        let record = &rx[rx_pos..end];
+        let raw = &record[16..];
+        rx_pos = end;
+
+        if let Some(s) = stats {
+            Stats::add(&s.packets, 1);
+        }
+
+        let pkt = parse_packet(raw);
         let pkt = match pkt {
             Some(p) => p,
             None => continue,
         };
+        if pkt.device == info.devnum as u16
+            && let Some(s) = stats
+        {
+            Stats::add(&s.device_packets, 1);
+        }
 
         let ts = OffsetDateTime::from_unix_timestamp(ts_sec)
             .unwrap_or_else(|_| OffsetDateTime::now_utc())
             + TimeDuration::microseconds(ts_usec);
+
+        if debug_all && pkt.data_length > 0 {
+            probe.record(&pkt);
+        }
 
         // Tee URB to pcap before bulk filtering so control transfers, etc., are
         // also recorded for Wireshark — filter only by device address here since
@@ -99,7 +154,7 @@ pub fn run_passive(
         if pkt.device == info.devnum as u16
             && let Some(sink) = pcap_sink.as_mut()
         {
-            sink.write_packet(ts, &pkt_buf)?;
+            sink.write_packet(ts, record)?;
         }
 
         if pkt.transfer != USBPCAP_TRANSFER_BULK {
@@ -125,11 +180,29 @@ pub fn run_passive(
             continue;
         }
 
-        let dir = if dir_in { Direction::In } else { Direction::Out };
+        let dir = if dir_in {
+            Direction::In
+        } else {
+            Direction::Out
+        };
+        if let Some(s) = stats {
+            let urbs = if dir_in { &s.in_urbs } else { &s.out_urbs };
+            let bytes = if dir_in { &s.in_bytes } else { &s.out_bytes };
+            Stats::add(urbs, 1);
+            Stats::add(bytes, pkt.payload.len() as u64);
+        }
         decoded.clear();
         decoder.decode(dir, pkt.payload, &mut decoded);
         if decoded.is_empty() {
             continue;
+        }
+        if let Some(s) = stats {
+            let counter = if dir_in {
+                &s.decoded_in
+            } else {
+                &s.decoded_out
+            };
+            Stats::add(counter, decoded.len() as u64);
         }
 
         on_event(Event {
@@ -142,11 +215,55 @@ pub fn run_passive(
 }
 
 struct ParsedPacket<'a> {
+    bus: u16,
     device: u16,
     endpoint: u8,
     transfer: u8,
     data_length: u32,
     payload: &'a [u8],
+}
+
+/// Rate-limited packet printer for `--debug-usb`. A busy bus (a USB NIC, for
+/// example) produces thousands of packets per second; printing the first few of
+/// each `(bus, device, endpoint, transfer)` stream and then every 200th keeps
+/// the interesting UART traffic visible.
+#[derive(Default)]
+struct Probe {
+    seen: std::collections::HashMap<(u16, u16, u8, u8), usize>,
+}
+
+impl Probe {
+    fn record(&mut self, pkt: &ParsedPacket<'_>) {
+        let key = (pkt.bus, pkt.device, pkt.endpoint, pkt.transfer);
+        let count = self.seen.entry(key).or_insert(0);
+        *count += 1;
+        if *count > 3 && !(*count).is_multiple_of(200) {
+            return;
+        }
+
+        let kind = match pkt.transfer {
+            USBPCAP_TRANSFER_BULK => "bulk",
+            1 => "intr",
+            2 => "ctrl",
+            0 => "iso",
+            _ => "other",
+        };
+        let dir = if pkt.endpoint & 0x80 != 0 {
+            "in "
+        } else {
+            "out"
+        };
+        let n = pkt.payload.len().min(12);
+        let hex = pkt.payload[..n]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!(
+            "  [usb] bus {} dev {:>3} ep 0x{:02x} {kind}-{dir} x{count:<5} len {:>4}  {hex}",
+            pkt.bus, pkt.device, pkt.endpoint, pkt.data_length
+        );
+    }
 }
 
 fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
@@ -168,6 +285,7 @@ fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
     if header_len < 27 || header_len > buf.len() {
         return None;
     }
+    let bus = u16::from_le_bytes(buf[17..19].try_into().unwrap());
     let device = u16::from_le_bytes(buf[19..21].try_into().unwrap());
     let endpoint = buf[21];
     let transfer = buf[22];
@@ -178,6 +296,7 @@ fn parse_packet(buf: &[u8]) -> Option<ParsedPacket<'_>> {
         return None;
     }
     Some(ParsedPacket {
+        bus,
         device,
         endpoint,
         transfer,
@@ -207,7 +326,9 @@ fn open_usbpcap(path: &str) -> Result<HANDLE> {
             None,
         )
     }
-    .map_err(|e| anyhow!("opening {path}: {e} — is USBPcap installed and the device plugged in?"))?;
+    .map_err(|e| {
+        anyhow!("opening {path}: {e} — is USBPcap installed and the device plugged in?")
+    })?;
     Ok(h)
 }
 
@@ -241,7 +362,7 @@ struct UsbpcapAddressFilter {
 
 const _: () = assert!(std::mem::size_of::<UsbpcapAddressFilter>() == 17);
 
-fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
+fn start_filtering(handle: HANDLE, address: u8, filter_all: bool) -> Result<()> {
     // Build the bit array in a local before constructing the packed struct,
     // since taking references to fields of a packed struct is unsafe in Rust.
     let mut addresses = [0u32; 4];
@@ -252,7 +373,7 @@ fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
     }
     let filter = UsbpcapAddressFilter {
         addresses,
-        filter_all: 0,
+        filter_all: u8::from(filter_all),
     };
     let mut returned = 0u32;
     unsafe {
@@ -271,19 +392,35 @@ fn start_filtering(handle: HANDLE, address: u8) -> Result<()> {
     Ok(())
 }
 
+/// Append one chunk from USBPcap to `buf[*len..]`, compacting consumed bytes
+/// to the front first. The driver blocks until at least one byte is available,
+/// so `got == 0` means the handle was closed.
+fn refill(handle: HANDLE, buf: &mut Vec<u8>, len: &mut usize, pos: &mut usize) -> Result<()> {
+    if *pos > 0 {
+        buf.copy_within(*pos..*len, 0);
+        *len -= *pos;
+        *pos = 0;
+    }
+    if *len == buf.len() {
+        let bigger = buf.len() * 2;
+        buf.resize(bigger, 0);
+    }
+    let mut got: u32 = 0;
+    unsafe { ReadFile(handle, Some(&mut buf[*len..]), Some(&mut got), None) }
+        .map_err(|e| anyhow!("ReadFile on USBPcap: {e}"))?;
+    if got == 0 {
+        bail!("USBPcap stream closed unexpectedly");
+    }
+    *len += got as usize;
+    Ok(())
+}
+
 fn read_exact(handle: HANDLE, buf: &mut [u8]) -> Result<()> {
     let mut filled = 0usize;
     while filled < buf.len() {
         let mut got: u32 = 0;
-        unsafe {
-            ReadFile(
-                handle,
-                Some(&mut buf[filled..]),
-                Some(&mut got),
-                None,
-            )
-        }
-        .map_err(|e| anyhow!("ReadFile on USBPcap: {e}"))?;
+        unsafe { ReadFile(handle, Some(&mut buf[filled..]), Some(&mut got), None) }
+            .map_err(|e| anyhow!("ReadFile on USBPcap: {e}"))?;
         if got == 0 {
             bail!("USBPcap stream closed unexpectedly");
         }
@@ -295,6 +432,42 @@ fn read_exact(handle: HANDLE, buf: &mut [u8]) -> Result<()> {
 struct HandleGuard(HANDLE);
 impl Drop for HandleGuard {
     fn drop(&mut self) {
-        unsafe { let _ = CloseHandle(self.0); }
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_buffer_bytes, parse_packet};
+
+    #[test]
+    fn buffer_size_is_clamped_to_the_driver_limits() {
+        assert_eq!(clamp_buffer_bytes(0), 4 * 1024);
+        assert_eq!(clamp_buffer_bytes(16 * 1024 * 1024), 16 * 1024 * 1024);
+        assert_eq!(clamp_buffer_bytes(u32::MAX), 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parses_a_bulk_packet_and_ignores_a_truncated_one() {
+        let mut buf = vec![0u8; 27 + 4];
+        buf[0..2].copy_from_slice(&27u16.to_le_bytes());
+        buf[17..19].copy_from_slice(&2u16.to_le_bytes()); // bus
+        buf[19..21].copy_from_slice(&10u16.to_le_bytes()); // device
+        buf[21] = 0x81; // bulk IN
+        buf[22] = 3; // bulk
+        buf[23..27].copy_from_slice(&4u32.to_le_bytes());
+        buf[27..31].copy_from_slice(b"abcd");
+
+        let pkt = parse_packet(&buf).expect("valid packet");
+        assert_eq!(
+            (pkt.bus, pkt.device, pkt.endpoint, pkt.transfer),
+            (2, 10, 0x81, 3)
+        );
+        assert_eq!(pkt.payload, b"abcd");
+
+        assert!(parse_packet(&buf[..26]).is_none());
+        assert!(parse_packet(&buf[..30]).is_none());
     }
 }

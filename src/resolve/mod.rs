@@ -29,7 +29,7 @@ pub use linux::{list_ports, resolve};
 #[cfg(target_os = "windows")]
 mod win;
 #[cfg(target_os = "windows")]
-pub use win::{list_ports, resolve};
+pub use win::{auto_usbpcap, list_ports, print_usbpcap_diagnostics, resolve};
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn resolve(_port: &str) -> anyhow::Result<PortInfo> {
