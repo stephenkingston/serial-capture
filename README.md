@@ -114,6 +114,23 @@ whole packets away. Two things make that visible:
 .\tools\verify-capture.ps1 -Path .\run.log -Expected 5000
 ```
 
+Capturing the *receiving* port is the harsher test for PL2303, whose Windows
+driver reads one byte per URB. Nothing is read from that endpoint unless an
+application has the port open, so hold it open with `receive-test.ps1` — that
+also programs the chip's baud rate:
+
+```powershell
+# Terminal 1 (elevated): capture COM7.
+.\serial-capture.exe --port COM7 --format ascii --wrap 0 -o .\cap.log
+
+# Terminal 2: keep COM7 open at the same baud as the sender.
+.\tools\receive-test.ps1 -Port COM7 -Baud 921600 -Seconds 30 -OutFile .\rx.log
+```
+
+Then compare three numbers: sender bytes (printed by the sender) vs
+`rx.log` length (UART/chip loss) vs the capture's `IN … B` total
+(USBPcap/capture-process loss).
+
 Capture is passive, so it sees traffic while another program owns the port.
 For the harshest test, capture the PL2303 side: its Windows driver issues one
 URB per byte, so 921600 baud means ~92,000 URBs per second.
