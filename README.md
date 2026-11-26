@@ -179,6 +179,9 @@ Output
                        URBs are joined and split on newlines, so a line stays
                        one row even when the driver delivers it byte by byte
                        (PL2303 on Windows does this).
+  --wrap <BYTES>       Bytes per output row (default 16). Continuation rows of
+                       a long line are indented instead of repeating the
+                       timestamp. Use 0 to print each line as a single row.
 
 First-run / privileges
   -y, --yes            Linux: auto-confirm sudo prompts (load usbmon, write
@@ -216,8 +219,9 @@ Text output is line-oriented: bytes from consecutive URBs in the same
 direction are joined, split on `\n`, and flushed when the direction changes or
 the stream stalls for 50 ms. This matters on Windows, where the PL2303 driver
 reads one byte at a time — without it a single line would print as one row per
-character. `--no-assemble` restores per-URB rows; `--pcap` always stores the
-raw URBs.
+character. A line longer than `--wrap` bytes (default 16) continues on indented
+rows without repeating the timestamp, and `--wrap 0` prints it as one row.
+`--no-assemble` restores per-URB rows; `--pcap` always stores the raw URBs.
 
 ## Limitations / future work
 

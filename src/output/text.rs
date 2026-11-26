@@ -9,7 +9,6 @@ use time::{Duration, OffsetDateTime, UtcOffset};
 use crate::capture::{Direction, Event};
 use crate::cli::Format;
 
-const BYTES_PER_LINE: usize = 16;
 /// A burst that stalls for this long is flushed even without a newline.
 const IDLE_FLUSH: Duration = Duration::milliseconds(50);
 /// Never hold more than this without a newline (binary protocols).
@@ -101,6 +100,7 @@ pub struct TextSink {
     format: Format,
     printable_only: bool,
     local_offset: UtcOffset,
+    wrap: usize,
     assembler: LineAssembler,
     assembled: Vec<Event>,
 }
@@ -116,6 +116,7 @@ impl TextSink {
         format: Format,
         printable_only: bool,
         assemble_lines: bool,
+        wrap: usize,
     ) -> Result<Self> {
         let file = match path {
             Some(p) => Some(BufWriter::new(
@@ -130,6 +131,7 @@ impl TextSink {
             format,
             printable_only,
             local_offset,
+            wrap,
             assembler: LineAssembler::new(assemble_lines),
             assembled: Vec::new(),
         })
@@ -177,8 +179,7 @@ impl TextSink {
             Direction::In => "←",
         };
 
-        for chunk in ev.bytes.chunks(BYTES_PER_LINE) {
-            let line = format_line(&ts, arrow, chunk, self.format);
+        for line in render_rows(&ts, arrow, &ev.bytes, self.format, self.wrap) {
             if let Some(f) = self.file.as_mut() {
                 writeln!(f, "{line}").context("writing to log file")?;
             }
@@ -194,6 +195,29 @@ impl TextSink {
     }
 }
 
+/// Lay out one event. The first row carries the timestamp and direction arrow;
+/// continuation rows are indented to the same column instead of repeating
+/// them, so a long line reads as one event. `wrap == 0` prints the whole event
+/// as a single row.
+fn render_rows(ts: &str, arrow: &str, bytes: &[u8], format: Format, wrap: usize) -> Vec<String> {
+    let prefix = format!("{ts}  {arrow}  ");
+    let indent = " ".repeat(prefix.chars().count());
+    let row_width = if wrap == 0 {
+        bytes.len().max(1)
+    } else {
+        wrap
+    };
+
+    bytes
+        .chunks(row_width)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let lead = if i == 0 { prefix.as_str() } else { indent.as_str() };
+            format_line(lead, chunk, format, row_width)
+        })
+        .collect()
+}
+
 /// True if the payload contains at least one byte that's printable ASCII or
 /// common whitespace (TAB / LF / CR). Used by `--printable-only` to skip
 /// pure-binary keep-alive events without losing partially-textual ones.
@@ -203,18 +227,15 @@ fn contains_text(bytes: &[u8]) -> bool {
         .any(|&b| (0x20..=0x7e).contains(&b) || matches!(b, 0x09 | 0x0a | 0x0d))
 }
 
-fn format_line(ts: &str, arrow: &str, bytes: &[u8], format: Format) -> String {
+fn format_line(prefix: &str, bytes: &[u8], format: Format, row_width: usize) -> String {
     let mut s = String::with_capacity(96);
-    s.push_str(ts);
-    s.push_str("  ");
-    s.push_str(arrow);
-    s.push_str("  ");
+    s.push_str(prefix);
 
     match format {
-        Format::Hex => push_hex(&mut s, bytes, false),
+        Format::Hex => push_hex(&mut s, bytes, false, row_width),
         Format::Ascii => push_ascii(&mut s, bytes),
         Format::Both => {
-            push_hex(&mut s, bytes, true);
+            push_hex(&mut s, bytes, true, row_width);
             s.push_str("  ");
             push_ascii(&mut s, bytes);
         }
@@ -222,7 +243,7 @@ fn format_line(ts: &str, arrow: &str, bytes: &[u8], format: Format) -> String {
     s
 }
 
-fn push_hex(s: &mut String, bytes: &[u8], pad_to_full_width: bool) {
+fn push_hex(s: &mut String, bytes: &[u8], pad_to_full_width: bool, row_width: usize) {
     use std::fmt::Write as _;
     for (i, b) in bytes.iter().enumerate() {
         if i > 0 {
@@ -230,8 +251,8 @@ fn push_hex(s: &mut String, bytes: &[u8], pad_to_full_width: bool) {
         }
         let _ = write!(s, "{b:02x}");
     }
-    if pad_to_full_width && bytes.len() < BYTES_PER_LINE {
-        let missing = BYTES_PER_LINE - bytes.len();
+    if pad_to_full_width && bytes.len() < row_width {
+        let missing = row_width - bytes.len();
         // each missing byte = "XX " (3 chars); the trailing space becomes the gap.
         for _ in 0..missing {
             s.push_str("   ");
@@ -350,6 +371,45 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].bytes, b"H");
         assert_eq!(out[1].bytes, b"i");
+    }
+
+    #[test]
+    fn long_line_wraps_without_repeating_the_timestamp() {
+        let bytes: Vec<u8> = (b'a'..=b'z').chain(b'0'..=b'9').collect(); // 36 bytes
+        let rows = render_rows("TS", "←", &bytes, Format::Both, 16);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].starts_with("TS  ←  "));
+        // Continuation rows are padded to the same column and carry no ts/arrow.
+        for row in &rows[1..] {
+            assert!(row.starts_with("       "), "unexpected row: {row:?}");
+            assert!(!row.contains("TS"));
+            assert!(!row.contains('←'));
+        }
+        // The ASCII columns line up under each other (compare display columns,
+        // not byte offsets: the arrow is multi-byte UTF-8).
+        let column = |s: &str| s.chars().take_while(|&c| c != '|').count();
+        assert_eq!(column(&rows[1]), column(&rows[0]));
+    }
+
+    #[test]
+    fn wrap_zero_prints_one_row_per_event() {
+        let bytes = b"Hi, Bob..............................................\r\n";
+        let rows = render_rows("TS", "→", bytes, Format::Both, 0);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].starts_with("TS  →  "));
+        // Single row: no hex padding, so the ASCII column follows immediately
+        // after the last byte pair.
+        assert!(rows[0].contains("|Hi, Bob"));
+    }
+
+    #[test]
+    fn short_line_pads_the_hex_column() {
+        let rows = render_rows("TS", "←", b"abc", Format::Both, 16);
+        assert_eq!(rows.len(), 1);
+        let ascii_at = rows[0].find('|').unwrap();
+        // 16 byte slots = 47 chars for the hex column.
+        let hex_start = "TS  ←  ".len();
+        assert_eq!(ascii_at - hex_start, 47 + 2);
     }
 
     #[test]

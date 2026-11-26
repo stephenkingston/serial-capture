@@ -99,6 +99,7 @@ fn main() -> Result<()> {
         args.format,
         args.printable_only,
         !args.no_assemble,
+        args.wrap,
     )?;
 
     // USBPcap exposes one interface per host controller. When the user didn't

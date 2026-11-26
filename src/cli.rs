@@ -38,6 +38,11 @@ pub struct Args {
     #[arg(long)]
     pub no_assemble: bool,
 
+    /// Bytes per output row. Rows after the first are indented instead of
+    /// repeating the timestamp. Use 0 to print each captured line as one row.
+    #[arg(long, value_name = "BYTES", default_value_t = 16)]
+    pub wrap: usize,
+
     /// Auto-confirm setup steps that need sudo (Linux: load usbmon, relax
     /// /dev/usbmon* permissions). Without this, you're prompted before each
     /// sudo invocation. Has no effect when setup is already complete.
