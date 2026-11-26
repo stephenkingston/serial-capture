@@ -427,9 +427,9 @@ mod tests {
 
     #[test]
     fn contains_text_keeps_common_whitespace() {
-        assert!(contains_text(&[b'\t']));
-        assert!(contains_text(&[b'\n']));
-        assert!(contains_text(&[b'\r']));
+        assert!(contains_text(b"\t"));
+        assert!(contains_text(b"\n"));
+        assert!(contains_text(b"\r"));
         assert!(contains_text(b"\r\n"));
     }
 

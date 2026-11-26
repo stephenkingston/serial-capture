@@ -67,6 +67,14 @@ pub struct Args {
     #[arg(long, value_name = "NAME")]
     pub usbpcap: Option<String>,
 
+    /// Windows only: USBPcap kernel ring-buffer size in MiB (4–128, default
+    /// 16). The driver drops whole packets when this buffer fills, so a larger
+    /// value rides out longer stalls in the reader. Raise it when capturing a
+    /// fast stream and comparing byte counts against the sender.
+    #[arg(long, value_name = "MIB", default_value_t = 16,
+          value_parser = clap::value_parser!(u32).range(4..=128))]
+    pub usbpcap_buffer_mb: u32,
+
     /// Windows only: print the root hub of each USBPcap interface and of the
     /// selected port, then exit. Use this when auto-detection fails.
     #[arg(long)]

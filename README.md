@@ -73,6 +73,51 @@ device's full URB stream (link types `DLT_USB_LINUX_MMAPPED` on Linux,
 `DLT_USBPCAP` on Windows). Wireshark's USB dissector reads it natively; you
 get control transfers, descriptor exchanges, and bulk traffic.
 
+## Testing for data loss
+
+Serial links fail silently: the UART, the USB-UART chip, and USBPcap's kernel
+ring buffer all drop data without telling anyone. On Windows the ring buffer
+is the usual suspect during bursts — when it fills, the USBPcap driver throws
+whole packets away. Two things make that visible:
+
+- `--usbpcap-buffer-mb <MIB>` (default 16, max 128) sizes that ring buffer.
+  The driver stores USB packets, not serial bytes: at 921600 baud a PL2303
+  delivers one-byte URBs, which cost ~44 bytes each in the ring (~4 MB/s of
+  traffic, so 16 MiB is ~4 seconds of slack). An FTDI sends 64-byte URBs and
+  gets minutes out of the same buffer. The chosen size is printed at startup.
+- The reader drains the ring in 256 KiB `ReadFile` calls, so one syscall
+  covers hundreds of queued URBs instead of two per packet. Without that, a
+  one-byte-per-URB driver at high baud keeps the userspace side busy enough to
+  let the kernel buffer overflow.
+- When capture stops, the byte totals are printed. Compare them with what the
+  sender reports:
+
+  ```
+  Stopped. Wrote 5000 line(s).
+  → capture: 51234 packet(s), 9843 for this device; IN 9843 URB(s) / 250000 B → 250000 B decoded; OUT 0 URB(s) / 0 B → 0 B decoded
+  ```
+
+  `IN 250000 B` matching the sender's byte count means nothing was lost on
+  the capture side. `decoded` below the raw count means the decoder stripped
+  bytes (modem status), which is expected for some chips.
+
+`tools/` has two PowerShell scripts for an end-to-end check on Windows:
+
+```powershell
+# Terminal 1 (elevated): capture the sending port.
+.\serial-capture.exe --port COM6 --format ascii --wrap 0 -o .\run.log
+
+# Terminal 2: 5000 numbered lines, 50 bytes each, as fast as the UART allows.
+.\tools\throughput-test.ps1 -Port COM6 -Baud 921600 -Lines 5000 -PayloadBytes 50
+
+# Terminal 1: Ctrl-C, then check for gaps.
+.\tools\verify-capture.ps1 -Path .\run.log -Expected 5000
+```
+
+Capture is passive, so it sees traffic while another program owns the port.
+For the harshest test, capture the PL2303 side: its Windows driver issues one
+URB per byte, so 921600 baud means ~92,000 URBs per second.
+
 ## First-run requirements
 
 ### Linux passive
@@ -196,6 +241,10 @@ Windows
   --debug-usb          Capture all devices and print one line per USB packet.
                        Use it to find the real device address.
   --usb-address <N>    Override the USB device address used for filtering.
+  --usbpcap-buffer-mb <MIB>
+                       USBPcap kernel ring-buffer size, 4-128 (default 16).
+                       Bigger survives longer reader stalls; the driver drops
+                       packets silently when it fills.
 
 Decoder tuning
   --ftdi-mps <BYTES>   Force FTDI bulk-IN wMaxPacketSize (64 or 512). Use only

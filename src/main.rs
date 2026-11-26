@@ -131,10 +131,13 @@ fn main() -> Result<()> {
         bail!("USBPcap interface not auto-detected");
     }
 
+    let stats = Arc::new(capture::Stats::default());
     let options = capture::PassiveOptions {
         pcap_path: args.pcap.as_deref(),
         usbpcap_override: usbpcap.as_deref(),
         debug_all: args.debug_usb,
+        usbpcap_buffer_bytes: args.usbpcap_buffer_mb.saturating_mul(1024 * 1024),
+        stats: Some(stats.as_ref()),
     };
     if let Some(p) = options.pcap_path {
         eprintln!("→ Pcapng to {}", p.display());
@@ -145,6 +148,7 @@ fn main() -> Result<()> {
     let sink = Arc::new(Mutex::new(sink));
     install_sigint_handler(
         written.clone(),
+        stats.clone(),
         sink.clone(),
         args.output.as_deref(),
         options.pcap_path,
@@ -169,7 +173,16 @@ fn main() -> Result<()> {
     if let Ok(mut sink) = sink.lock() {
         let _ = sink.flush();
     }
+    report_stats(&stats);
     result
+}
+
+/// Print capture totals if the backend filled them in. Loss is invisible
+/// in-band, so the operator compares these byte counts with the sender.
+fn report_stats(stats: &capture::Stats) {
+    if capture::Stats::get(&stats.packets) > 0 {
+        eprintln!("→ {}", stats.summary());
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -231,6 +244,7 @@ fn describe_dest(output: Option<&std::path::Path>, quiet: bool) -> String {
 
 fn install_sigint_handler(
     written: Arc<AtomicUsize>,
+    stats: Arc<capture::Stats>,
     sink: Arc<Mutex<TextSink>>,
     output: Option<&std::path::Path>,
     pcap: Option<&std::path::Path>,
@@ -253,6 +267,7 @@ fn install_sigint_handler(
         if let Some(p) = pcap.as_ref() {
             eprintln!("Pcapng saved to {}.", p.display());
         }
+        report_stats(&stats);
         std::process::exit(0);
     });
 }
